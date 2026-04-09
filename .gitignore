@@ -75,3 +75,6 @@ Thumbs.db
 # Certificates / keys
 *.pem
 apps/api/src/main/resources/application.properties
+
+# Old repos used for reference
+archive/
