@@ -4,6 +4,8 @@
 # Local tool state
 .codex
 .codex/
+AGENTS.md
+planning/
 
 # Dependencies
 **/node_modules/
@@ -25,6 +27,7 @@
 **/.cache/
 *.tsbuildinfo
 next-env.d.ts
+apps/web/public
 
 # Java / JVM build output
 **/target/
@@ -71,3 +74,4 @@ Thumbs.db
 
 # Certificates / keys
 *.pem
+apps/api/src/main/resources/application.properties
