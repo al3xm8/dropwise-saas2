@@ -133,8 +133,8 @@ export default function PricingPage() {
                 Starter is the path for quick evaluation and small-scale
                 adoption. Additional users can be added at +$30, then +$45,
                 then +$65 per user, with each extra user beyond 5 staying at
-                +$65. By that point, Starter should stop being the sensible
-                path.
+                +$65. By the 5-user crossover, Starter should stop being the
+                sensible path.
               </p>
             </div>
 
