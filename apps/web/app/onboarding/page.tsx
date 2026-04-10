@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type StageId =
   | "welcome"
@@ -123,7 +123,58 @@ function readinessTone(ready: boolean) {
     : "bg-amber-500/10 text-amber-800 ring-amber-500/15";
 }
 
+function FieldHelp({
+  title,
+  bullets,
+  isOpen,
+  onToggle,
+  align = "left",
+}: {
+  title: string;
+  bullets: string[];
+  isOpen: boolean;
+  onToggle: () => void;
+  align?: "left" | "right";
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={`Help for ${title}`}
+        aria-expanded={isOpen}
+        className="inline-flex h-3 w-3 items-center justify-center rounded-full border border-slate-300/80 bg-white/90 text-[0.45rem] font-semibold text-slate-500 shadow-[0_4px_10px_rgba(148,163,184,0.10)] transition-colors hover:bg-slate-50 hover:text-slate-700"
+      >
+        ?
+      </button>
+
+      {isOpen ? (
+        <div
+          className={clsx(
+            "absolute top-6 z-40 w-[min(19rem,calc(100vw-4rem))] rounded-[1rem] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(244,247,255,0.92))] p-4 text-left shadow-[0_22px_48px_rgba(15,23,42,0.10)] ring-1 ring-white/80 backdrop-blur-sm",
+            align === "right" ? "right-0" : "left-0",
+          )}
+        >
+          <div className="text-[0.74rem] font-semibold uppercase tracking-[0.18em] text-[#2563eb]">
+            {title}
+          </div>
+          <ul className="mt-3 space-y-2 text-[0.88rem] leading-6 tracking-[-0.02em] text-slate-700">
+            {bullets.map((bullet) => (
+              <li key={bullet} className="flex gap-2">
+                <span className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-[#60a5fa]" />
+                <span>{bullet}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function OnboardingPage() {
+  const apiBaseUrl =
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   const [currentStage, setCurrentStage] = useState<StageId>("welcome");
   const [ticketingProvider, setTicketingProvider] =
     useState<string>("ConnectWise");
@@ -132,14 +183,21 @@ export default function OnboardingPage() {
   const [connectwiseSaved, setConnectwiseSaved] = useState(false);
   const [destinationSaved, setDestinationSaved] = useState(false);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
-  const [connectwiseSite, setConnectwiseSite] = useState("");
+  const [connectwiseSite] = useState("na.myconnectwise.net");
   const [connectwiseCompanyId, setConnectwiseCompanyId] = useState("");
   const [connectwiseClientId, setConnectwiseClientId] = useState("");
   const [connectwisePublicKey, setConnectwisePublicKey] = useState("");
   const [connectwisePrivateKey, setConnectwisePrivateKey] = useState("");
-  const [slackWorkspaceLabel, setSlackWorkspaceLabel] = useState("");
+  const [slackWorkspaceId, setSlackWorkspaceId] = useState("");
   const [defaultChannelId, setDefaultChannelId] = useState("");
   const [botInvited, setBotInvited] = useState(false);
+  const [openHelpId, setOpenHelpId] = useState<string | null>(null);
+  const [tenantId, setTenantId] = useState("");
+  const [tenantError, setTenantError] = useState("");
+  const [connectwiseSaving, setConnectwiseSaving] = useState(false);
+  const [destinationSaving, setDestinationSaving] = useState(false);
+  const [connectwiseError, setConnectwiseError] = useState("");
+  const [destinationError, setDestinationError] = useState("");
 
   const activeStageIndex = stages.findIndex((stage) => stage.id === currentStage);
   const currentStageMeta = stages[activeStageIndex];
@@ -153,7 +211,7 @@ export default function OnboardingPage() {
     connectwisePrivateKey.trim() !== "";
 
   const destinationFieldsReady =
-    slackWorkspaceLabel.trim() !== "" &&
+    slackWorkspaceId.trim() !== "" &&
     defaultChannelId.trim() !== "" &&
     botInvited;
 
@@ -203,9 +261,113 @@ export default function OnboardingPage() {
     if (previousStage) setCurrentStage(previousStage.id);
   };
 
+  useEffect(() => {
+    const storedTenantId = window.localStorage.getItem("dropwiseTenantId");
+
+    if (storedTenantId) {
+      setTenantId(storedTenantId);
+      return;
+    }
+
+    const createTenant = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/app/tenants`, {
+          method: "POST",
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to create setup tenant.");
+        }
+
+        const payload = (await response.json()) as { tenantId?: string };
+
+        if (!payload.tenantId) {
+          throw new Error("The API did not return a tenant id.");
+        }
+
+        window.localStorage.setItem("dropwiseTenantId", payload.tenantId);
+        setTenantId(payload.tenantId);
+      } catch (error) {
+        setTenantError(
+          error instanceof Error
+            ? error.message
+            : "Failed to create setup tenant.",
+        );
+      }
+    };
+
+    void createTenant();
+  }, [apiBaseUrl]);
+
+  const saveConnectwiseDetails = async () => {
+    if (!connectwiseFieldsReady || connectwiseSaving || !tenantId) {
+      return;
+    }
+
+    setConnectwiseSaving(true);
+    setConnectwiseError("");
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/app/secrets/connectwise`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tenantId,
+          clientId: connectwiseClientId,
+          publicKey: connectwisePublicKey,
+          privateKey: connectwisePrivateKey,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to save ConnectWise details.");
+      }
+
+      setConnectwiseSaved(true);
+    } catch (error) {
+      setConnectwiseSaved(false);
+      setConnectwiseError(
+        error instanceof Error
+          ? error.message
+          : "Failed to save ConnectWise details.",
+      );
+    } finally {
+      setConnectwiseSaving(false);
+    }
+  };
+
+  const saveSlackDestination = async () => {
+    if (!destinationFieldsReady || destinationSaving) {
+      return;
+    }
+
+    setDestinationSaving(true);
+    setDestinationError("");
+    setDestinationSaved(true);
+    setDestinationSaving(false);
+  };
+
   return (
-    <main className="min-h-screen bg-[linear-gradient(180deg,#f7f9fe_0%,#edf2ff_44%,#f7f4ee_100%)] px-4 py-10 sm:px-6 lg:px-10">
-      <div className="mx-auto max-w-[1280px]">
+    <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(180deg,#f7f9fe_0%,#edf2ff_44%,#f7f4ee_100%)] px-4 py-10 sm:px-6 lg:px-10">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-[-4%] top-[4%] h-52 w-52 rounded-full bg-[#fb7185]/22 blur-3xl" />
+        <div className="absolute left-[12%] top-[16%] h-40 w-40 rounded-full bg-[#facc15]/20 blur-3xl" />
+        <div className="absolute right-[4%] top-[8%] h-56 w-56 rounded-full bg-[#60a5fa]/20 blur-3xl" />
+        <div className="absolute right-[18%] top-[24%] h-36 w-36 rounded-full bg-[#c084fc]/18 blur-3xl" />
+        <div className="absolute left-[24%] top-[34%] h-32 w-32 rounded-full bg-[#34d399]/18 blur-3xl" />
+        <div className="absolute right-[10%] top-[42%] h-48 w-48 rounded-full bg-[#fb7185]/18 blur-3xl" />
+        <div className="absolute left-[6%] bottom-[34%] h-44 w-44 rounded-full bg-[#60a5fa]/18 blur-3xl" />
+        <div className="absolute left-[34%] bottom-[28%] h-56 w-56 rounded-full bg-[#facc15]/14 blur-3xl" />
+        <div className="absolute right-[24%] bottom-[30%] h-40 w-40 rounded-full bg-[#34d399]/18 blur-3xl" />
+        <div className="absolute right-[-2%] bottom-[24%] h-52 w-52 rounded-full bg-[#c084fc]/16 blur-3xl" />
+        <div className="absolute left-[18%] bottom-[10%] h-36 w-36 rounded-full bg-[#fb7185]/16 blur-3xl" />
+        <div className="absolute left-[48%] bottom-[4%] h-48 w-48 rounded-full bg-[#60a5fa]/18 blur-3xl" />
+        <div className="absolute right-[12%] bottom-[8%] h-40 w-40 rounded-full bg-[#34d399]/16 blur-3xl" />
+      </div>
+
+      <div className="relative mx-auto max-w-[1280px]">
         <div className="flex items-center justify-between gap-4">
           <Link
             href="/"
@@ -220,9 +382,14 @@ export default function OnboardingPage() {
             Contact sales
           </Link>
         </div>
+        {tenantError ? (
+          <p className="mt-4 rounded-[1rem] bg-red-500/10 px-4 py-3 text-[0.9rem] tracking-[-0.02em] text-[#b91c1c] ring-1 ring-red-500/15">
+            {tenantError}
+          </p>
+        ) : null}
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <section className="relative overflow-hidden rounded-[2.2rem] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(244,247,255,0.78))] px-5 py-6 shadow-[0_24px_60px_rgba(15,23,42,0.05)] ring-1 ring-white/80 backdrop-blur-sm sm:px-7 sm:py-7 lg:px-9 lg:py-8">
+          <section className="relative overflow-visible rounded-[2.2rem] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.86),rgba(244,247,255,0.78))] px-5 py-6 shadow-[0_24px_60px_rgba(15,23,42,0.05)] ring-1 ring-white/80 backdrop-blur-sm sm:px-7 sm:py-7 lg:px-9 lg:py-8">
             <div className="pointer-events-none absolute inset-0">
               <div className="absolute left-[4%] top-[6%] h-44 w-44 rounded-full bg-[#fb7185]/24 blur-3xl" />
               <div className="absolute right-[6%] top-[12%] h-44 w-44 rounded-full bg-[#facc15]/22 blur-3xl" />
@@ -511,21 +678,40 @@ export default function OnboardingPage() {
                     </div>
 
                     <label className="mt-5 grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700">
-                      <span className="font-medium">Workspace label</span>
+                      <span className="flex items-center gap-2 font-medium">
+                        Workspace ID
+                        <FieldHelp
+                          title="Slack workspace ID"
+                          bullets={[
+                            "This is autofilled after the Slack authentication flow completes.",
+                            "Use Connect Slack first, then return here to confirm the workspace ID.",
+                          ]}
+                          isOpen={openHelpId === "slack-workspace"}
+                          onToggle={() =>
+                            setOpenHelpId((current) =>
+                              current === "slack-workspace" ? null : "slack-workspace",
+                            )
+                          }
+                        />
+                      </span>
                       <input
-                        value={slackWorkspaceLabel}
+                        value={slackWorkspaceId}
                         onChange={(event) =>
-                          setSlackWorkspaceLabel(event.target.value)
+                          setSlackWorkspaceId(event.target.value)
                         }
-                        placeholder="Acme IT Slack"
-                        className="h-12 w-full min-w-0 rounded-[1rem] border border-slate-200/80 bg-white px-4 outline-none transition focus:border-[#60a5fa] focus:ring-4 focus:ring-[#60a5fa]/10"
+                        placeholder="Autofilled after Slack authentication"
+                        readOnly
+                        className="h-12 w-full min-w-0 rounded-[1rem] border border-slate-200/80 bg-slate-50/90 px-4 text-slate-500 outline-none"
                       />
                     </label>
 
                     <div className="mt-5 flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() => setSlackConnected(true)}
+                        onClick={() => {
+                          setSlackConnected(true);
+                          setSlackWorkspaceId((current) => current || "T012ABCDEF");
+                        }}
                         className="inline-flex h-11 items-center justify-center rounded-full bg-[#3b82f6] px-5 text-[0.94rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef]"
                         style={{ color: "#fff" }}
                       >
@@ -533,7 +719,10 @@ export default function OnboardingPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSlackConnected(false)}
+                        onClick={() => {
+                          setSlackConnected(false);
+                          setSlackWorkspaceId("");
+                        }}
                         className="inline-flex h-11 items-center justify-center rounded-full bg-white px-5 text-[0.94rem] font-semibold tracking-[-0.02em] text-slate-700 ring-1 ring-slate-200/70 transition-colors hover:bg-slate-50"
                       >
                         Reset
@@ -564,18 +753,46 @@ export default function OnboardingPage() {
 
                     <div className="mt-5 grid gap-4 lg:grid-cols-2">
                       <label className="grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700">
-                        <span className="font-medium">Site</span>
+                        <span className="flex items-center gap-2 font-medium">
+                          Site
+                          <FieldHelp
+                            title="ConnectWise site"
+                            bullets={[
+                              "The site is the default ConnectWise PSA domain.",
+                              "It should stay set to na.myconnectwise.net.",
+                            ]}
+                            isOpen={openHelpId === "connectwise-site"}
+                            onToggle={() =>
+                              setOpenHelpId((current) =>
+                                current === "connectwise-site" ? null : "connectwise-site",
+                              )
+                            }
+                          />
+                        </span>
                         <input
                           value={connectwiseSite}
-                          onChange={(event) =>
-                            setConnectwiseSite(event.target.value)
-                          }
-                          placeholder="na.myconnectwise.net"
-                          className="h-12 w-full min-w-0 rounded-[1rem] border border-slate-200/80 bg-white px-4 outline-none transition focus:border-[#60a5fa] focus:ring-4 focus:ring-[#60a5fa]/10"
+                          readOnly
+                          className="h-12 w-full min-w-0 rounded-[1rem] border border-slate-200/80 bg-slate-50/90 px-4 text-slate-500 outline-none"
                         />
                       </label>
                       <label className="grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700">
-                        <span className="font-medium">Company ID</span>
+                        <span className="flex items-center gap-2 font-medium">
+                          Company ID
+                          <FieldHelp
+                            title="ConnectWise company ID"
+                            bullets={[
+                              "Use the same company ID you use to log in to ConnectWise PSA.",
+                              "Enter that exact ID here.",
+                            ]}
+                            isOpen={openHelpId === "connectwise-company"}
+                            onToggle={() =>
+                              setOpenHelpId((current) =>
+                                current === "connectwise-company" ? null : "connectwise-company",
+                              )
+                            }
+                            align="right"
+                          />
+                        </span>
                         <input
                           value={connectwiseCompanyId}
                           onChange={(event) =>
@@ -586,7 +803,24 @@ export default function OnboardingPage() {
                         />
                       </label>
                       <label className="grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700">
-                        <span className="font-medium">Client ID</span>
+                        <span className="flex items-center gap-2 font-medium">
+                          Client ID
+                          <FieldHelp
+                            title="ConnectWise client ID"
+                            bullets={[
+                              "Go to developer.connectwise.com.",
+                              "Log in or register for ConnectWise PSA.",
+                              "Open ClientID from the top bar.",
+                              "Create a new registration and copy the Client ID.",
+                            ]}
+                            isOpen={openHelpId === "connectwise-client"}
+                            onToggle={() =>
+                              setOpenHelpId((current) =>
+                                current === "connectwise-client" ? null : "connectwise-client",
+                              )
+                            }
+                          />
+                        </span>
                         <input
                           value={connectwiseClientId}
                           onChange={(event) =>
@@ -596,7 +830,26 @@ export default function OnboardingPage() {
                         />
                       </label>
                       <label className="grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700">
-                        <span className="font-medium">Public key</span>
+                        <span className="flex items-center gap-2 font-medium">
+                          Public key
+                          <FieldHelp
+                            title="ConnectWise API keys"
+                            bullets={[
+                              "Go to na.myconnectwise.net and sign in.",
+                              "Open the account menu in the top right.",
+                              "Select My Account.",
+                              "Go to the API Keys tab and create a new key.",
+                              "Copy the public key into this field.",
+                            ]}
+                            isOpen={openHelpId === "connectwise-public"}
+                            onToggle={() =>
+                              setOpenHelpId((current) =>
+                                current === "connectwise-public" ? null : "connectwise-public",
+                              )
+                            }
+                            align="right"
+                          />
+                        </span>
                         <input
                           value={connectwisePublicKey}
                           onChange={(event) =>
@@ -606,7 +859,26 @@ export default function OnboardingPage() {
                         />
                       </label>
                       <label className="grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700 lg:col-span-2">
-                        <span className="font-medium">Private key</span>
+                        <span className="flex items-center gap-2 font-medium">
+                          Private key
+                          <FieldHelp
+                            title="ConnectWise API keys"
+                            bullets={[
+                              "Go to na.myconnectwise.net and sign in.",
+                              "Open the account menu in the top right.",
+                              "Select My Account.",
+                              "Go to the API Keys tab and create a new key.",
+                              "Copy the private key into this field after creation.",
+                            ]}
+                            isOpen={openHelpId === "connectwise-private"}
+                            onToggle={() =>
+                              setOpenHelpId((current) =>
+                                current === "connectwise-private" ? null : "connectwise-private",
+                              )
+                            }
+                            align="right"
+                          />
+                        </span>
                         <input
                           value={connectwisePrivateKey}
                           onChange={(event) =>
@@ -621,14 +893,14 @@ export default function OnboardingPage() {
                     <div className="mt-5 flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() =>
-                          setConnectwiseSaved(connectwiseFieldsReady)
-                        }
-                        disabled={!connectwiseFieldsReady}
+                        onClick={saveConnectwiseDetails}
+                        disabled={!connectwiseFieldsReady || connectwiseSaving || !tenantId}
                         className="inline-flex h-11 items-center justify-center rounded-full bg-[#3b82f6] px-5 text-[0.94rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef] disabled:cursor-not-allowed disabled:opacity-50"
                         style={{ color: "#fff" }}
                       >
-                        Save ConnectWise details
+                        {connectwiseSaving
+                          ? "Saving ConnectWise details..."
+                          : "Save ConnectWise details"}
                       </button>
                       <button
                         type="button"
@@ -638,6 +910,12 @@ export default function OnboardingPage() {
                         Reset
                       </button>
                     </div>
+
+                    {connectwiseError ? (
+                      <p className="mt-4 text-[0.9rem] tracking-[-0.02em] text-[#b91c1c]">
+                        {connectwiseError}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -673,14 +951,14 @@ export default function OnboardingPage() {
                     <div className="mt-5 flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() =>
-                          setDestinationSaved(destinationFieldsReady)
-                        }
-                        disabled={!destinationFieldsReady}
+                        onClick={saveSlackDestination}
+                        disabled={!destinationFieldsReady || destinationSaving}
                         className="inline-flex h-11 items-center justify-center rounded-full bg-[#3b82f6] px-5 text-[0.94rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef] disabled:cursor-not-allowed disabled:opacity-50"
                         style={{ color: "#fff" }}
                       >
-                        Save destination
+                        {destinationSaving
+                          ? "Saving destination..."
+                          : "Save destination"}
                       </button>
                       <button
                         type="button"
@@ -690,6 +968,12 @@ export default function OnboardingPage() {
                         Reset
                       </button>
                     </div>
+
+                    {destinationError ? (
+                      <p className="mt-4 text-[0.9rem] tracking-[-0.02em] text-[#b91c1c]">
+                        {destinationError}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="rounded-[1.6rem] bg-white/76 px-5 py-5 ring-1 ring-white/80 shadow-[0_14px_28px_rgba(148,163,184,0.08)]">
@@ -717,7 +1001,7 @@ export default function OnboardingPage() {
                         { label: "Messaging provider", value: messagingProvider },
                         {
                           label: "Slack workspace",
-                          value: slackWorkspaceLabel || "Not saved",
+                          value: slackWorkspaceId || "Not saved",
                         },
                         {
                           label: "Slack channel",
@@ -788,7 +1072,7 @@ export default function OnboardingPage() {
 
                 {currentStage === "review" ? (
                   <Link
-                    href={onboardingReady && reviewConfirmed ? "/" : "#"}
+                    href={onboardingReady && reviewConfirmed ? "/dashboard" : "#"}
                     aria-disabled={!onboardingReady || !reviewConfirmed}
                     className={clsx(
                       "inline-flex h-11 items-center justify-center rounded-full px-5 text-[0.94rem] font-semibold tracking-[-0.02em] transition-all duration-200",

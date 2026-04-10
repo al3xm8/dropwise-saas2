@@ -55,8 +55,6 @@ This repository currently contains:
 - `apps/api`: a Spring Boot API service
 - `archive/dropwise`: the previous full implementation, retained as a migration reference for backend domain logic, integrations, tenancy, and security
 
-Migration notes for the archive live in [docs/archive-migration-plan.md](docs/archive-migration-plan.md).
-
 ## 🛠️ Local development
 
 ### Web app 🌐
