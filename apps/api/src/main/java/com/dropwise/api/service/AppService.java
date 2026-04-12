@@ -3,10 +3,14 @@ package com.dropwise.api.service;
 import java.security.SecureRandom;
 
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import com.dropwise.api.model.ConnectwiseSecretRequest;
 import com.dropwise.api.model.SaveSecretResponse;
 import com.dropwise.api.model.SlackSecretRequest;
+import com.dropwise.api.model.TenantConfigRequest;
+import com.dropwise.api.model.TenantConfigResponse;
 import com.dropwise.api.model.TenantResponse;
 
 @Service
@@ -46,12 +50,13 @@ public class AppService {
     public SaveSecretResponse saveConnectwiseSecret(ConnectwiseSecretRequest request) {
         
         request.setTenantId(trim(request.getTenantId()));
+        request.setConnectwiseSite(trim(request.getConnectwiseSite()));
         request.setClientId(trim(request.getClientId()));
         request.setPublicKey(trim(request.getPublicKey()));
         request.setPrivateKey(trim(request.getPrivateKey()));
 
-        String secretName = awsService.saveConnectwiseSecret(request);
-        return new SaveSecretResponse(secretName);
+        awsService.saveConnectwiseSecret(request);
+        return new SaveSecretResponse(true);
     }
 
     /**
@@ -68,8 +73,24 @@ public class AppService {
         request.setBotToken(trim(request.getBotToken()));
         request.setRefreshToken(trim(request.getRefreshToken()));
 
-        String secretName = awsService.saveSlackSecret(request);
-        return new SaveSecretResponse(secretName);
+        awsService.saveSlackSecret(request);
+        return new SaveSecretResponse(true);
+    }
+
+    public TenantConfigResponse saveTenantConfig(TenantConfigRequest request) {
+        request.setTenantId(trim(request.getTenantId()));
+        request.setConnectwiseSite(trim(request.getConnectwiseSite()));
+        request.setConnectwiseCompanyId(trim(request.getConnectwiseCompanyId()));
+        request.setSlackWorkspaceId(trim(request.getSlackWorkspaceId()));
+        request.setDefaultChannelId(trim(request.getDefaultChannelId()));
+
+        return awsService.saveTenantConfig(request);
+    }
+
+    public TenantConfigResponse loadTenantConfig(String tenantId) {
+        String normalizedTenantId = trim(tenantId);
+        return awsService.loadTenantConfig(normalizedTenantId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant config not found."));
     }
 
     private String generateTenantId() {

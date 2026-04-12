@@ -2,6 +2,7 @@ package com.dropwise.api.model;
 
 public class ConnectwiseSecretRequest {
     private String tenantId;
+    private String connectwiseSite;
     private String clientId;
     private String publicKey;
     private String privateKey;
@@ -12,6 +13,14 @@ public class ConnectwiseSecretRequest {
 
     public void setTenantId(String tenantId) {
         this.tenantId = tenantId;
+    }
+
+    public String getConnectwiseSite() {
+        return connectwiseSite;
+    }
+
+    public void setConnectwiseSite(String connectwiseSite) {
+        this.connectwiseSite = connectwiseSite;
     }
 
     public String getClientId() {

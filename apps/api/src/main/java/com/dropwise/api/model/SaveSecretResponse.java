@@ -1,13 +1,13 @@
 package com.dropwise.api.model;
 
 public class SaveSecretResponse {
-    private final String secretName;
+    private final boolean saved;
 
-    public SaveSecretResponse(String secretName) {
-        this.secretName = secretName;
+    public SaveSecretResponse(boolean saved) {
+        this.saved = saved;
     }
 
-    public String getSecretName() {
-        return secretName;
+    public boolean isSaved() {
+        return saved;
     }
 }

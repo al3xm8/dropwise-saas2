@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type StageId =
@@ -20,6 +21,23 @@ type ProviderCard = {
   width: number;
   height: number;
   className?: string;
+};
+
+type TenantConfigPayload = {
+  tenantId: string;
+  connectwiseSite: string;
+  connectwiseCompanyId: string;
+  slackWorkspaceId: string;
+  defaultChannelId: string;
+  connectwiseConnected: boolean;
+  slackConnected: boolean;
+  botInvited: boolean;
+  onboardingCompleted: boolean;
+};
+
+type TenantConfigResponse = TenantConfigPayload & {
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 const stages: Array<{ id: StageId; label: string; eyebrow: string }> = [
@@ -173,6 +191,7 @@ function FieldHelp({
 }
 
 export default function OnboardingPage() {
+  const router = useRouter();
   const apiBaseUrl =
     process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
   const [currentStage, setCurrentStage] = useState<StageId>("welcome");
@@ -183,7 +202,7 @@ export default function OnboardingPage() {
   const [connectwiseSaved, setConnectwiseSaved] = useState(false);
   const [destinationSaved, setDestinationSaved] = useState(false);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
-  const [connectwiseSite] = useState("na.myconnectwise.net");
+  const [connectwiseSite, setConnectwiseSite] = useState("na.myconnectwise.net");
   const [connectwiseCompanyId, setConnectwiseCompanyId] = useState("");
   const [connectwiseClientId, setConnectwiseClientId] = useState("");
   const [connectwisePublicKey, setConnectwisePublicKey] = useState("");
@@ -199,6 +218,8 @@ export default function OnboardingPage() {
   const [connectwiseError, setConnectwiseError] = useState("");
   const [destinationError, setDestinationError] = useState("");
   const [slackConnectionError, setSlackConnectionError] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewError, setReviewError] = useState("");
 
   const activeStageIndex = stages.findIndex((stage) => stage.id === currentStage);
   const currentStageMeta = stages[activeStageIndex];
@@ -240,6 +261,41 @@ export default function OnboardingPage() {
   ];
 
   const onboardingReady = readinessItems.every((item) => item.ready);
+
+  const saveTenantConfig = async (
+    overrides: Partial<TenantConfigPayload> = {},
+  ) => {
+    if (!tenantId) {
+      throw new Error("Create the setup tenant before saving configuration.");
+    }
+
+    const payload: TenantConfigPayload = {
+      tenantId,
+      connectwiseSite,
+      connectwiseCompanyId,
+      slackWorkspaceId,
+      defaultChannelId,
+      connectwiseConnected: connectwiseSaved,
+      slackConnected,
+      botInvited,
+      onboardingCompleted: onboardingReady && reviewConfirmed,
+      ...overrides,
+    };
+
+    const response = await fetch(`${apiBaseUrl}/api/app/tenant-config`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to save onboarding configuration.");
+    }
+
+    return (await response.json()) as TenantConfigResponse;
+  };
 
   const canContinue =
     currentStage === "welcome"
@@ -305,6 +361,54 @@ export default function OnboardingPage() {
       return;
     }
 
+    const loadTenantConfig = async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/app/tenant-config/${encodeURIComponent(tenantId)}`,
+        );
+
+        if (response.status === 404) {
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Failed to load saved onboarding configuration.");
+        }
+
+        const payload = (await response.json()) as TenantConfigResponse;
+
+        if (payload.connectwiseSite) {
+          setConnectwiseSite(payload.connectwiseSite);
+        }
+
+        setConnectwiseCompanyId(payload.connectwiseCompanyId ?? "");
+        setSlackWorkspaceId(payload.slackWorkspaceId ?? "");
+        setDefaultChannelId(payload.defaultChannelId ?? "");
+        setConnectwiseSaved(Boolean(payload.connectwiseConnected));
+        setSlackConnected(Boolean(payload.slackConnected));
+        setBotInvited(Boolean(payload.botInvited));
+        setDestinationSaved(
+          Boolean(payload.defaultChannelId) && Boolean(payload.botInvited),
+        );
+        setReviewConfirmed(Boolean(payload.onboardingCompleted));
+
+        if (payload.slackWorkspaceId) {
+          window.localStorage.setItem(
+            `dropwiseSlackWorkspaceId:${tenantId}`,
+            payload.slackWorkspaceId,
+          );
+        }
+      } catch (error) {
+        setTenantError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load saved onboarding configuration.",
+        );
+      }
+    };
+
+    void loadTenantConfig();
+
     const storedWorkspaceId = window.localStorage.getItem(
       `dropwiseSlackWorkspaceId:${tenantId}`,
     );
@@ -313,7 +417,7 @@ export default function OnboardingPage() {
       setSlackWorkspaceId(storedWorkspaceId);
       setSlackConnected(true);
     }
-  }, [tenantId]);
+  }, [apiBaseUrl, tenantId]);
 
   useEffect(() => {
     const handleSlackOAuthMessage = (event: MessageEvent) => {
@@ -343,6 +447,17 @@ export default function OnboardingPage() {
             workspaceId,
           );
         }
+
+        void saveTenantConfig({
+          slackWorkspaceId: workspaceId,
+          slackConnected: true,
+        }).catch((error) => {
+          setSlackConnectionError(
+            error instanceof Error
+              ? error.message
+              : "Failed to save onboarding configuration.",
+          );
+        });
       }
 
       if (payload.type === "dropwise-slack-oauth-error") {
@@ -360,7 +475,17 @@ export default function OnboardingPage() {
     return () => {
       window.removeEventListener("message", handleSlackOAuthMessage);
     };
-  }, [tenantId]);
+  }, [
+    apiBaseUrl,
+    botInvited,
+    connectwiseCompanyId,
+    connectwiseSaved,
+    connectwiseSite,
+    defaultChannelId,
+    onboardingReady,
+    reviewConfirmed,
+    tenantId,
+  ]);
 
   const saveConnectwiseDetails = async () => {
     if (!connectwiseFieldsReady || connectwiseSaving || !tenantId) {
@@ -378,6 +503,7 @@ export default function OnboardingPage() {
         },
         body: JSON.stringify({
           tenantId,
+          connectwiseSite,
           clientId: connectwiseClientId,
           publicKey: connectwisePublicKey,
           privateKey: connectwisePrivateKey,
@@ -387,6 +513,12 @@ export default function OnboardingPage() {
       if (!response.ok) {
         throw new Error("Failed to save ConnectWise details.");
       }
+
+      await saveTenantConfig({
+        connectwiseSite,
+        connectwiseCompanyId,
+        connectwiseConnected: true,
+      });
 
       setConnectwiseSaved(true);
     } catch (error) {
@@ -408,8 +540,49 @@ export default function OnboardingPage() {
 
     setDestinationSaving(true);
     setDestinationError("");
-    setDestinationSaved(true);
-    setDestinationSaving(false);
+
+    try {
+      await saveTenantConfig({
+        slackWorkspaceId,
+        defaultChannelId,
+        slackConnected,
+        botInvited,
+      });
+      setDestinationSaved(true);
+    } catch (error) {
+      setDestinationSaved(false);
+      setDestinationError(
+        error instanceof Error
+          ? error.message
+          : "Failed to save destination.",
+      );
+    } finally {
+      setDestinationSaving(false);
+    }
+  };
+
+  const finishOnboarding = async () => {
+    if (!onboardingReady || !reviewConfirmed || reviewSaving) {
+      return;
+    }
+
+    setReviewSaving(true);
+    setReviewError("");
+
+    try {
+      await saveTenantConfig({
+        onboardingCompleted: true,
+      });
+      router.push("/dashboard");
+    } catch (error) {
+      setReviewError(
+        error instanceof Error
+          ? error.message
+          : "Failed to complete onboarding.",
+      );
+    } finally {
+      setReviewSaving(false);
+    }
   };
 
   const connectSlack = () => {
@@ -848,8 +1021,8 @@ export default function OnboardingPage() {
                           <FieldHelp
                             title="ConnectWise site"
                             bullets={[
-                              "The site is the default ConnectWise PSA domain.",
-                              "It should stay set to na.myconnectwise.net.",
+                              "Use the ConnectWise PSA host for your region or server.",
+                              "Examples include na.myconnectwise.net, eu.myconnectwise.net, or your on-premise server domain.",
                             ]}
                             isOpen={openHelpId === "connectwise-site"}
                             onToggle={() =>
@@ -861,8 +1034,11 @@ export default function OnboardingPage() {
                         </span>
                         <input
                           value={connectwiseSite}
-                          readOnly
-                          className="h-12 w-full min-w-0 rounded-[1rem] border border-slate-200/80 bg-slate-50/90 px-4 text-slate-500 outline-none"
+                          onChange={(event) =>
+                            setConnectwiseSite(event.target.value)
+                          }
+                          placeholder="na.myconnectwise.net"
+                          className="h-12 w-full min-w-0 rounded-[1rem] border border-slate-200/80 bg-white px-4 outline-none transition focus:border-[#60a5fa] focus:ring-4 focus:ring-[#60a5fa]/10"
                         />
                       </label>
                       <label className="grid min-w-0 gap-2 text-[0.92rem] tracking-[-0.02em] text-slate-700">
@@ -925,7 +1101,7 @@ export default function OnboardingPage() {
                           <FieldHelp
                             title="ConnectWise API keys"
                             bullets={[
-                              "Go to na.myconnectwise.net and sign in.",
+                              "Go to your ConnectWise PSA site and sign in.",
                               "Open the account menu in the top right.",
                               "Select My Account.",
                               "Go to the API Keys tab and create a new key.",
@@ -954,7 +1130,7 @@ export default function OnboardingPage() {
                           <FieldHelp
                             title="ConnectWise API keys"
                             bullets={[
-                              "Go to na.myconnectwise.net and sign in.",
+                              "Go to your ConnectWise PSA site and sign in.",
                               "Open the account menu in the top right.",
                               "Select My Account.",
                               "Go to the API Keys tab and create a new key.",
@@ -1141,6 +1317,11 @@ export default function OnboardingPage() {
                         I reviewed the setup details and I am ready to continue.
                       </span>
                     </label>
+                    {reviewError ? (
+                      <p className="mt-4 text-[0.9rem] tracking-[-0.02em] text-[#b91c1c]">
+                        {reviewError}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -1161,9 +1342,10 @@ export default function OnboardingPage() {
                 </button>
 
                 {currentStage === "review" ? (
-                  <Link
-                    href={onboardingReady && reviewConfirmed ? "/dashboard" : "#"}
-                    aria-disabled={!onboardingReady || !reviewConfirmed}
+                  <button
+                    type="button"
+                    onClick={finishOnboarding}
+                    disabled={!onboardingReady || !reviewConfirmed || reviewSaving}
                     className={clsx(
                       "inline-flex h-11 items-center justify-center rounded-full px-5 text-[0.94rem] font-semibold tracking-[-0.02em] transition-all duration-200",
                       onboardingReady && reviewConfirmed
@@ -1171,8 +1353,8 @@ export default function OnboardingPage() {
                         : "cursor-not-allowed bg-slate-200/80 text-slate-400",
                     )}
                   >
-                    Enter Dropwise
-                  </Link>
+                    {reviewSaving ? "Finishing setup..." : "Enter Dropwise"}
+                  </button>
                 ) : (
                   <button
                     type="button"

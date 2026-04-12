@@ -3,8 +3,8 @@ package com.dropwise.api.controller;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,15 +14,13 @@ import org.springframework.web.bind.annotation.RestController;
 import com.dropwise.api.model.ConnectwiseSecretRequest;
 import com.dropwise.api.model.SaveSecretResponse;
 import com.dropwise.api.model.SlackSecretRequest;
+import com.dropwise.api.model.TenantConfigRequest;
+import com.dropwise.api.model.TenantConfigResponse;
 import com.dropwise.api.model.TenantResponse;
 import com.dropwise.api.service.AppService;
 
 
 @RestController
-@CrossOrigin(origins = {
-    "http://localhost:3000",
-    "https://dropwise-eight.vercel.app"
-})
 @RequestMapping("/api/app")
 public class AppController {
 
@@ -49,6 +47,17 @@ public class AppController {
     @GetMapping("/health")
     public Map<String, String> health() {
         return Map.of("status", appService.health());
+    }
+
+    @GetMapping("/tenant-config/{tenantId}")
+    public TenantConfigResponse loadTenantConfig(@PathVariable String tenantId) {
+        return appService.loadTenantConfig(tenantId);
+    }
+
+    @PostMapping("/tenant-config")
+    @ResponseStatus(HttpStatus.CREATED)
+    public TenantConfigResponse saveTenantConfig(@RequestBody TenantConfigRequest request) {
+        return appService.saveTenantConfig(request);
     }
 
     /**
