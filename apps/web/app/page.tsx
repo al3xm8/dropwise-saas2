@@ -75,7 +75,7 @@ export default function Home() {
       src: "/imessage-logo-transparent.png",
       width: 76,
       height: 51,
-      className: "h-42",
+      className: "h-18",
     },
   ];
   const ticketingPlatforms = integrations.slice(0, 5);

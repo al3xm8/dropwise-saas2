@@ -32,6 +32,10 @@ public class AppService {
         return new TenantResponse(generateTenantId());
     }
 
+    public String health() {
+        return "ok";
+    }
+
     /**
      * Saves the provided Connectwise secret for the specified tenant and returns the generated secret name.
      * 

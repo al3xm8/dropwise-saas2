@@ -198,6 +198,7 @@ export default function OnboardingPage() {
   const [destinationSaving, setDestinationSaving] = useState(false);
   const [connectwiseError, setConnectwiseError] = useState("");
   const [destinationError, setDestinationError] = useState("");
+  const [slackConnectionError, setSlackConnectionError] = useState("");
 
   const activeStageIndex = stages.findIndex((stage) => stage.id === currentStage);
   const currentStageMeta = stages[activeStageIndex];
@@ -299,6 +300,68 @@ export default function OnboardingPage() {
     void createTenant();
   }, [apiBaseUrl]);
 
+  useEffect(() => {
+    if (!tenantId) {
+      return;
+    }
+
+    const storedWorkspaceId = window.localStorage.getItem(
+      `dropwiseSlackWorkspaceId:${tenantId}`,
+    );
+
+    if (storedWorkspaceId) {
+      setSlackWorkspaceId(storedWorkspaceId);
+      setSlackConnected(true);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    const handleSlackOAuthMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const payload = event.data;
+
+      if (!payload || typeof payload !== "object" || !("type" in payload)) {
+        return;
+      }
+
+      if (payload.type === "dropwise-slack-oauth-complete") {
+        const workspaceId =
+          "workspaceId" in payload && typeof payload.workspaceId === "string"
+            ? payload.workspaceId
+            : "";
+
+        setSlackConnected(true);
+        setSlackWorkspaceId(workspaceId);
+        setSlackConnectionError("");
+
+        if (tenantId && workspaceId) {
+          window.localStorage.setItem(
+            `dropwiseSlackWorkspaceId:${tenantId}`,
+            workspaceId,
+          );
+        }
+      }
+
+      if (payload.type === "dropwise-slack-oauth-error") {
+        setSlackConnected(false);
+        setSlackConnectionError(
+          "message" in payload && typeof payload.message === "string"
+            ? payload.message
+            : "Slack OAuth failed.",
+        );
+      }
+    };
+
+    window.addEventListener("message", handleSlackOAuthMessage);
+
+    return () => {
+      window.removeEventListener("message", handleSlackOAuthMessage);
+    };
+  }, [tenantId]);
+
   const saveConnectwiseDetails = async () => {
     if (!connectwiseFieldsReady || connectwiseSaving || !tenantId) {
       return;
@@ -347,6 +410,24 @@ export default function OnboardingPage() {
     setDestinationError("");
     setDestinationSaved(true);
     setDestinationSaving(false);
+  };
+
+  const connectSlack = () => {
+    if (!tenantId) {
+      setSlackConnectionError("Create the setup tenant before connecting Slack.");
+      return;
+    }
+
+    setSlackConnectionError("");
+    const popup = window.open(
+      `/api/slack/oauth/install?tenantId=${encodeURIComponent(tenantId)}`,
+      "dropwise-slack-oauth",
+      "popup=yes,width=620,height=760",
+    );
+
+    if (!popup) {
+      setSlackConnectionError("The Slack popup was blocked by your browser.");
+    }
   };
 
   return (
@@ -708,10 +789,7 @@ export default function OnboardingPage() {
                     <div className="mt-5 flex flex-wrap gap-3">
                       <button
                         type="button"
-                        onClick={() => {
-                          setSlackConnected(true);
-                          setSlackWorkspaceId((current) => current || "T012ABCDEF");
-                        }}
+                        onClick={connectSlack}
                         className="inline-flex h-11 items-center justify-center rounded-full bg-[#3b82f6] px-5 text-[0.94rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.25)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef]"
                         style={{ color: "#fff" }}
                       >
@@ -722,12 +800,24 @@ export default function OnboardingPage() {
                         onClick={() => {
                           setSlackConnected(false);
                           setSlackWorkspaceId("");
+                          setSlackConnectionError("");
+                          if (tenantId) {
+                            window.localStorage.removeItem(
+                              `dropwiseSlackWorkspaceId:${tenantId}`,
+                            );
+                          }
                         }}
                         className="inline-flex h-11 items-center justify-center rounded-full bg-white px-5 text-[0.94rem] font-semibold tracking-[-0.02em] text-slate-700 ring-1 ring-slate-200/70 transition-colors hover:bg-slate-50"
                       >
                         Reset
                       </button>
                     </div>
+
+                    {slackConnectionError ? (
+                      <p className="mt-4 text-[0.9rem] tracking-[-0.02em] text-[#b91c1c]">
+                        {slackConnectionError}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="min-w-0 rounded-[1.6rem] bg-white/76 px-5 py-5 ring-1 ring-white/80 shadow-[0_14px_28px_rgba(148,163,184,0.08)]">

@@ -1,7 +1,10 @@
 package com.dropwise.api.controller;
 
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,7 +19,10 @@ import com.dropwise.api.service.AppService;
 
 
 @RestController
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(origins = {
+    "http://localhost:3000",
+    "https://dropwise-eight.vercel.app"
+})
 @RequestMapping("/api/app")
 public class AppController {
 
@@ -38,6 +44,11 @@ public class AppController {
     @ResponseStatus(HttpStatus.CREATED)
     public TenantResponse createTenant() {
         return appService.createTenant();
+    }
+
+    @GetMapping("/health")
+    public Map<String, String> health() {
+        return Map.of("status", appService.health());
     }
 
     /**
