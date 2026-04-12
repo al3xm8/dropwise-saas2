@@ -1,11 +1,9 @@
 services:
   - type: web
     name: dropwise-api
-    runtime: java
+    runtime: docker
     rootDir: apps/api
     plan: free
-    buildCommand: ./mvnw clean package -DskipTests
-    startCommand: java -jar target/api-0.0.1-SNAPSHOT.jar --server.port=$PORT
     healthCheckPath: /api/app/health
     envVars:
       - key: AWS_REGION
