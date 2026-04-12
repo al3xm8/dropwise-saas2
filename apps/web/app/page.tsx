@@ -11,6 +11,13 @@ export default function Home() {
   ];
   const integrations = [
     {
+      name: "ConnectWise",
+      src: "/connectwise-logo-transparent.png",
+      width: 2705,
+      height: 421,
+      className: "h-8",
+    },
+    {
       name: "Jira",
       src: "/jira-logo-transparent.png",
       width: 108,
@@ -68,11 +75,11 @@ export default function Home() {
       src: "/imessage-logo-transparent.png",
       width: 76,
       height: 51,
-      className: "h-22",
+      className: "h-18",
     },
   ];
-  const ticketingPlatforms = integrations.slice(0, 4);
-  const messagingPlatforms = integrations.slice(4);
+  const ticketingPlatforms = integrations.slice(0, 5);
+  const messagingPlatforms = integrations.slice(5);
   const workflowSteps = [
     {
       step: "01",
@@ -119,7 +126,7 @@ export default function Home() {
       label: "Source",
       title: "Tickets start in the systems your team already runs.",
       description:
-        "Requests originate in tools like Jira, Zendesk, ServiceNow, and Salesforce, where work is already tracked and owned.",
+        "Requests originate in tools like ConnectWise, Jira, Zendesk, ServiceNow, and Salesforce, where work is already tracked and owned.",
     },
     route: {
       label: "Route through Dropwise",
@@ -295,9 +302,9 @@ export default function Home() {
                   team already uses.
                 </span>
                 <span className="mt-4 block max-w-[42rem] text-[1.02rem] font-medium leading-8 tracking-[-0.025em] text-slate-600 sm:text-[1.1rem]">
-                  Dropwise sends tickets from systems like Jira, Zendesk, and
-                  ServiceNow into tools like Slack and Microsoft Teams so teams
-                  can triage and respond faster without leaving chat.
+                  Dropwise sends tickets from systems like ConnectWise, Jira,
+                  and Zendesk into tools like Slack and Microsoft Teams so
+                  teams can triage and respond faster without leaving chat.
                 </span>
               </h1>
             </div>

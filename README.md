@@ -55,7 +55,16 @@ This repository currently contains:
 - `apps/api`: a Spring Boot API service
 - `archive/dropwise`: the previous full implementation, retained as a migration reference for backend domain logic, integrations, tenancy, and security
 
-Migration notes for the archive live in [docs/archive-migration-plan.md](docs/archive-migration-plan.md).
+## 🚧 Current implementation status
+
+The current working slice is authentication plus staged onboarding.
+
+- `apps/web` is deployed on Vercel
+- `apps/api` is deployed on Render
+- onboarding now creates backend-owned tenant IDs
+- ConnectWise credentials are saved through the API into AWS Secrets Manager
+- Slack OAuth is wired through the web app and its tokens are saved through the API into AWS Secrets Manager
+- `/dashboard` exists as the post-onboarding placeholder route
 
 ## 🛠️ Local development
 
@@ -73,6 +82,17 @@ npm run dev
 cd apps/api
 ./mvnw spring-boot:run
 ```
+
+API environment:
+
+- Spring config values:
+  - `app.web.allowed-origins`
+  - `aws.region`
+  - `aws.secrets-prefix`
+  - `aws.dynamodb-table`
+- AWS credential values:
+  - `AWS_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY`
 
 ### Tests 🧪
 
