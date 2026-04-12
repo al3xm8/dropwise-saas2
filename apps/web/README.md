@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dropwise Web App
 
-## Getting Started
+This is the Next.js frontend for Dropwise.
 
-First, run the development server:
+## Current Scope
+
+- public marketing pages such as `/`, `/pricing`, and `/contact-sales`
+- Auth0-based sign-in
+- protected `/onboarding` flow
+- protected `/dashboard` placeholder route
+- Slack OAuth install and callback routes hosted on the web app
+
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Required Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Core auth:
 
-## Learn More
+- `AUTH0_DOMAIN`
+- `AUTH0_CLIENT_ID`
+- `AUTH0_CLIENT_SECRET`
+- `AUTH0_SECRET`
+- `APP_BASE_URL`
 
-To learn more about Next.js, take a look at the following resources:
+Frontend to API:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `NEXT_PUBLIC_API_BASE_URL`
+- `API_BASE_URL`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Slack OAuth:
 
-## Deploy on Vercel
+- `SLACK_CLIENT_ID`
+- `SLACK_CLIENT_SECRET`
+- `SLACK_OAUTH_REDIRECT_URI`
+- `SLACK_OAUTH_BOT_SCOPES`
+- `SLACK_OAUTH_USER_SCOPES`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Use `.env.local.example` as the reference.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deployment Notes
+
+- the web app is deployed on Vercel
+- the production callback host is currently `https://dropwise-eight.vercel.app`
+- Slack OAuth callback route lives at `/api/slack/oauth/callback`
+- browser-side onboarding calls use `NEXT_PUBLIC_API_BASE_URL`
+- server-side Slack callback persistence uses `API_BASE_URL`

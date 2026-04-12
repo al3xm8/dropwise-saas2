@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: dropwise-api
+    runtime: docker
+    rootDir: apps/api
+    plan: free
+    healthCheckPath: /api/app/health
+    envVars:
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_SECRETS_PREFIX
+        sync: false
+      - key: AWS_DYNAMODB_TABLE
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: APP_WEB_ALLOWED_ORIGINS
+        sync: false
