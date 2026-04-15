@@ -39,11 +39,14 @@ public class AWSService {
     private final String secretsPrefix;
     private final String dynamoDbTable;
     
-    public AWSService(
-        @Value("${aws.region:us-east-1}") String awsRegion,
-        @Value("${aws.secrets-prefix:dropwise}") String secretsPrefix,
-        @Value("${aws.dynamodb-table}") String dynamoDbTable
-    ) {
+    /**
+     * Constructs an instance of AWSService with the provided configuration values for AWS region, secrets prefix, and DynamoDB table name.
+     *
+     * @param awsRegion the AWS region to connect to (default is "us-east-1" if not provided)
+     * @param secretsPrefix the prefix to use for secret names in AWS Secrets Manager (default is "dropwise" if not provided)
+     * @param dynamoDbTable the name of the DynamoDB table to use for tenant configuration storage
+     */
+    public AWSService(@Value("${aws.region:us-east-1}") String awsRegion, @Value("${aws.secrets-prefix:dropwise}") String secretsPrefix, @Value("${aws.dynamodb-table}") String dynamoDbTable) {
         Region region = Region.of(StringUtils.hasText(awsRegion) ? awsRegion : "us-east-1");
         this.secretsManagerClient = SecretsManagerClient.builder().region(region).build();
         this.dynamoDbClient = DynamoDbClient.builder().region(region).build();
@@ -52,6 +55,12 @@ public class AWSService {
         this.dynamoDbTable = dynamoDbTable;
     }
 
+    /**
+     * Saves the provided Connectwise secret for the specified tenant and returns the generated secret name.
+     *
+     * @param request the request containing the Connectwise secret details and tenant ID
+     * @return the generated secret name
+     */
     public String saveConnectwiseSecret(ConnectwiseSecretRequest request) {
         String secretName = secretName(request.getTenantId(), "connectwise");
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -62,6 +71,12 @@ public class AWSService {
         return secretName;
     }
 
+    /**
+     * Saves the provided Slack secret for the specified tenant and returns the generated secret name.
+     *
+     * @param request the request containing the Slack secret details and tenant ID
+     * @return the generated secret name
+     */
     public String saveSlackSecret(SlackSecretRequest request) {
         String secretName = secretName(request.getTenantId(), "slack");
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -73,6 +88,12 @@ public class AWSService {
         return secretName;
     }
 
+    /**
+     * Saves the tenant configuration details for the specified tenant and returns the saved configuration.
+     *
+     * @param request the request containing the tenant configuration details
+     * @return the saved tenant configuration
+     */
     public TenantConfigResponse saveTenantConfig(TenantConfigRequest request) {
         String now = Instant.now().toString();
         Optional<TenantConfigResponse> existingConfig = loadTenantConfig(request.getTenantId());
@@ -102,6 +123,12 @@ public class AWSService {
         return fromTenantConfigItem(item);
     }
 
+    /**
+     * Loads the tenant configuration details for the specified tenant ID.
+     *
+     * @param tenantId the ID of the tenant whose configuration is to be loaded
+     * @return an Optional containing the loaded tenant configuration if found, or empty if not found
+     */
     public Optional<TenantConfigResponse> loadTenantConfig(String tenantId) {
         Map<String, AttributeValue> item = dynamoDbClient.getItem(GetItemRequest.builder()
             .tableName(dynamoDbTable)
@@ -118,6 +145,13 @@ public class AWSService {
         return Optional.of(fromTenantConfigItem(item));
     }
 
+    /**
+     * Writes the given payload as a secret to AWS Secrets Manager under the specified secret name.
+     * If the secret already exists, it updates the secret value; otherwise, it creates a new secret.
+     *
+     * @param secretName the name of the secret to create or update
+     * @param payload the payload object to be serialized and stored as the secret value
+     */
     private void writeSecret(String secretName, Object payload) {
         String json;
 
@@ -140,6 +174,8 @@ public class AWSService {
         }
     }
 
+    // Helper methods for constructing secret names, DynamoDB keys, and converting between data formats
+    
     private String secretName(String tenantId, String provider) {
         return secretsPrefix + "/" + tenantId + "/" + provider;
     }
@@ -162,6 +198,12 @@ public class AWSService {
         }
     }
 
+    /**
+     * Converts a DynamoDB item represented as a map of attribute values into a TenantConfigResponse object.
+     *
+     * @param item the DynamoDB item to convert
+     * @return the resulting TenantConfigResponse object
+     */
     private TenantConfigResponse fromTenantConfigItem(Map<String, AttributeValue> item) {
         TenantConfigResponse response = new TenantConfigResponse();
         response.setTenantId(stringValue(item, "tenantId"));
@@ -177,6 +219,8 @@ public class AWSService {
         response.setUpdatedAt(stringValue(item, "updatedAt"));
         return response;
     }
+
+    // Helper methods for extracting string and boolean values from DynamoDB items
 
     private String stringValue(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);

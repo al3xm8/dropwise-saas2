@@ -33,27 +33,46 @@ public class AppController {
      * 
      * @param appService the service to handle app-related operations
      */
-    
     public AppController(AppService appService) {
         this.appService = appService;
     }
 
+    /**
+     * Endpoint to create a new tenant. 
+     * Returns a TenantResponse containing the generated tenant ID.
+     * @return TenantResponse with the generated tenant ID
+     */
     @PostMapping("/tenants")
     @ResponseStatus(HttpStatus.CREATED)
     public TenantResponse createTenant() {
         return appService.createTenant();
     }
 
+    /**
+     * Endpoint to check the health of the application.
+     * @return a map containing the health status of the application
+     */
     @GetMapping("/health")
     public Map<String, String> health() {
         return Map.of("status", appService.health());
     }
 
+    /**
+     * Endpoint to load the tenant configuration for a given tenant ID.
+     * @param tenantId the ID of the tenant whose configuration is to be loaded
+     * @return TenantConfigResponse containing the tenant configuration details
+     */
     @GetMapping("/tenant-config/{tenantId}")
     public TenantConfigResponse loadTenantConfig(@PathVariable String tenantId) {
         return appService.loadTenantConfig(tenantId);
     }
 
+    /**
+     * Endpoint to save the tenant configuration for a given tenant ID.
+     * Accepts a TenantConfigRequest containing the configuration details and returns a TenantConfigResponse.
+     * @param request the request containing the tenant configuration details
+     * @return TenantConfigResponse with the saved tenant configuration details
+     */
     @PostMapping("/tenant-config")
     @ResponseStatus(HttpStatus.CREATED)
     public TenantConfigResponse saveTenantConfig(@RequestBody TenantConfigRequest request) {

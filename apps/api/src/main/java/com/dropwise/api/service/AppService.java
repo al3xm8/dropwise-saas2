@@ -32,10 +32,20 @@ public class AppService {
         this.awsService = awsService;
     }
 
+    /**
+     * Creates a new tenant and returns the generated tenant ID.
+     *
+     * @return the response containing the generated tenant ID
+     */
     public TenantResponse createTenant() {
         return new TenantResponse(generateTenantId());
     }
 
+    /**
+     * Checks the health of the application.
+     *
+     * @return "ok" if the application is healthy
+     */
     public String health() {
         return "ok";
     }
@@ -77,6 +87,13 @@ public class AppService {
         return new SaveSecretResponse(true);
     }
 
+    /**
+     * Saves the tenant configuration details for the specified tenant and returns the saved configuration.
+     * 
+     * @param request the request containing the tenant configuration details
+     * @return the saved tenant configuration wrapped in a TenantConfigResponse
+     */
+
     public TenantConfigResponse saveTenantConfig(TenantConfigRequest request) {
         request.setTenantId(trim(request.getTenantId()));
         request.setConnectwiseSite(trim(request.getConnectwiseSite()));
@@ -87,16 +104,36 @@ public class AppService {
         return awsService.saveTenantConfig(request);
     }
 
+    /**
+     * Loads the tenant configuration details for the specified tenant ID.
+     *
+     * @param tenantId the ID of the tenant whose configuration is to be loaded
+     * @return the loaded tenant configuration wrapped in a TenantConfigResponse
+     * @throws ResponseStatusException if the tenant configuration is not found
+     */
+
     public TenantConfigResponse loadTenantConfig(String tenantId) {
         String normalizedTenantId = trim(tenantId);
         return awsService.loadTenantConfig(normalizedTenantId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant config not found."));
     }
 
+    /**
+     * Generates a unique tenant ID by encoding the current timestamp and appending a random suffix.
+     * 
+     * @return the generated tenant ID
+     */
+
     private String generateTenantId() {
         return "tenant_" + encodeTimestamp(System.currentTimeMillis()) + randomSuffix();
     }
 
+    /**
+     * Encodes the provided timestamp into a string representation using a custom alphabet.
+     *
+     * @param timestamp the timestamp to encode
+     * @return the encoded string representation of the timestamp
+     */
     private String encodeTimestamp(long timestamp) {
         char[] encoded = new char[10];
         long value = timestamp;
@@ -108,7 +145,12 @@ public class AppService {
 
         return new String(encoded);
     }
-
+    
+    /**
+     * Generates a random suffix string of a specified length using a custom alphabet.
+     *
+     * @return the generated random suffix string
+     */
     private String randomSuffix() {
         char[] suffix = new char[TENANT_ID_RANDOM_LENGTH];
 
