@@ -7,8 +7,16 @@ This is the Next.js frontend for Dropwise.
 - public marketing pages such as `/`, `/pricing`, and `/contact-sales`
 - Auth0-based sign-in
 - protected `/onboarding` flow
-- protected `/dashboard` placeholder route
+- protected authenticated app shell
+- protected `/dashboard` core-app route
 - Slack OAuth install and callback routes hosted on the web app
+
+## Current Core-App Status
+
+- the shared authenticated shell is implemented
+- dashboard is the first completed core-app surface
+- feed now exists as the second core-app surface
+- rules and settings remain upcoming surfaces
 
 ## Local Development
 
