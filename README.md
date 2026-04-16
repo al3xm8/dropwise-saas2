@@ -57,14 +57,16 @@ This repository currently contains:
 
 ## 🚧 Current implementation status
 
-The current working slice is authentication plus staged onboarding.
+The current working slice is the first authenticated core-app surfaces after onboarding.
 
 - `apps/web` is deployed on Vercel
 - `apps/api` is deployed on Render
 - onboarding now creates backend-owned tenant IDs
 - ConnectWise credentials are saved through the API into AWS Secrets Manager
 - Slack OAuth is wired through the web app and its tokens are saved through the API into AWS Secrets Manager
-- `/dashboard` exists as the post-onboarding placeholder route
+- the authenticated app shell is in place
+- `/dashboard` now exists as the first real post-onboarding core-app surface
+- `/feed` now exists as the activity and routing outcomes surface
 
 ## 🛠️ Local development
 
