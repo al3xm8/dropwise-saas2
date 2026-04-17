@@ -242,7 +242,10 @@ public class AppService {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack channel lookup failed.");
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack channel lookup failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
             }
 
             Map<String, Object> payload = objectMapper.readValue(
@@ -252,7 +255,10 @@ public class AppService {
 
             Object okValue = payload.get("ok");
             if (!(okValue instanceof Boolean) || !((Boolean) okValue)) {
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack channel lookup failed.");
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack channel lookup failed. Body: " + response.body()
+                );
             }
 
             List<SlackChannelSummary> channels = new ArrayList<>();
@@ -276,10 +282,16 @@ public class AppService {
 
             return channels;
         } catch (IOException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack channel lookup failed.");
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack channel lookup failed: " + exception.getMessage()
+            );
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack channel lookup interrupted.");
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack channel lookup interrupted."
+            );
         }
     }
 
