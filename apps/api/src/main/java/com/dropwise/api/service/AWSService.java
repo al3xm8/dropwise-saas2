@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 
 import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.ConnectwiseSecretRequest;
+import com.dropwise.api.model.RoutingRule;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TenantConfigRequest;
 import com.dropwise.api.model.TenantConfigResponse;
@@ -313,6 +314,110 @@ public class AWSService {
         return events;
     }
 
+    public List<RoutingRule> listRules(String tenantId) {
+        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
+            .tableName(dynamoDbTable)
+            .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+            .expressionAttributeValues(Map.of(
+                ":pk", stringAttribute(tenantPartitionKey(tenantId)),
+                ":prefix", stringAttribute("RULE#")
+            ))
+            .scanIndexForward(true)
+            .build());
+
+        List<RoutingRule> rules = new ArrayList<>();
+        for (Map<String, AttributeValue> item : response.items()) {
+            rules.add(fromRoutingRuleItem(item));
+        }
+        return rules;
+    }
+
+    public Optional<RoutingRule> loadRule(String tenantId, String ruleId) {
+        return listRules(tenantId).stream()
+            .filter(rule -> ruleId.equals(rule.getRuleId()))
+            .findFirst();
+    }
+
+    public RoutingRule saveRule(RoutingRule rule) {
+        String now = Instant.now().toString();
+        if (!StringUtils.hasText(rule.getRuleId())) {
+            rule.setRuleId(UUID.randomUUID().toString());
+        }
+
+        Optional<RoutingRule> existingRule = loadRule(rule.getTenantId(), rule.getRuleId());
+        String createdAt = existingRule.map(RoutingRule::getCreatedAt).orElse(now);
+
+        if (existingRule.isPresent()) {
+            String previousKey = ruleSortKey(existingRule.get().getPriority(), existingRule.get().getRuleId());
+            String nextKey = ruleSortKey(rule.getPriority(), rule.getRuleId());
+            if (!previousKey.equals(nextKey)) {
+                dynamoDbClient.deleteItem(DeleteItemRequest.builder()
+                    .tableName(dynamoDbTable)
+                    .key(Map.of(
+                        "pk", stringAttribute(tenantPartitionKey(rule.getTenantId())),
+                        "sk", stringAttribute(previousKey)
+                    ))
+                    .build());
+            }
+        }
+
+        Map<String, AttributeValue> item = new LinkedHashMap<>();
+        item.put("pk", stringAttribute(tenantPartitionKey(rule.getTenantId())));
+        item.put("sk", stringAttribute(ruleSortKey(rule.getPriority(), rule.getRuleId())));
+        item.put("itemType", stringAttribute("RULE"));
+        item.put("tenantId", stringAttribute(rule.getTenantId()));
+        item.put("ruleId", stringAttribute(rule.getRuleId()));
+        item.put("priority", stringAttribute(String.valueOf(rule.getPriority())));
+        item.put("enabled", booleanAttribute(rule.isEnabled()));
+        item.put("stopProcessing", booleanAttribute(rule.isStopProcessing()));
+        item.put("createdAt", stringAttribute(createdAt));
+        item.put("updatedAt", stringAttribute(now));
+        putIfPresent(item, "name", rule.getName());
+        putIfPresent(item, "description", rule.getDescription());
+        putIfPresent(item, "sourceSystem", rule.getSourceSystem());
+        putIfPresent(item, "builderVersion", rule.getBuilderVersion());
+        putIfPresent(item, "builderSnapshotJson", rule.getBuilderSnapshotJson());
+        putIfPresent(item, "matchJson", writeJson(rule.getMatch()));
+        putIfPresent(item, "actionJson", writeJson(rule.getAction()));
+
+        dynamoDbClient.putItem(PutItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .item(item)
+            .build());
+
+        rule.setCreatedAt(createdAt);
+        rule.setUpdatedAt(now);
+        return rule;
+    }
+
+    public void deleteRule(String tenantId, String ruleId, int priority) {
+        dynamoDbClient.deleteItem(DeleteItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(tenantPartitionKey(tenantId)),
+                "sk", stringAttribute(ruleSortKey(priority, ruleId))
+            ))
+            .build());
+    }
+
+    public Optional<String> loadSlackBotToken(String tenantId) {
+        String secretName = secretName(tenantId, "slack");
+        try {
+            String secretJson = secretsManagerClient.getSecretValue(GetSecretValueRequest.builder()
+                .secretId(secretName)
+                .build()).secretString();
+
+            Map<String, String> payload = objectMapper.readValue(
+                secretJson,
+                new TypeReference<Map<String, String>>() {}
+            );
+
+            return Optional.ofNullable(payload.get("botToken"));
+        } catch (ResourceNotFoundException | JsonProcessingException exception) {
+            return Optional.empty();
+        }
+    }
+
     public void saveConnectwiseWebhook(
         String tenantId,
         String webhookId,
@@ -396,6 +501,10 @@ public class AWSService {
 
     private String ticketSortKey(String ticketId) {
         return "TICKET#" + ticketId;
+    }
+
+    private String ruleSortKey(int priority, String ruleId) {
+        return "RULE#" + String.format("%05d", priority) + "#" + ruleId;
     }
 
     private String eventSortKey(String createdAt, String ticketId, String eventId) {
@@ -524,11 +633,68 @@ public class AWSService {
         return response;
     }
 
+    private RoutingRule fromRoutingRuleItem(Map<String, AttributeValue> item) {
+        RoutingRule response = new RoutingRule();
+        response.setRuleId(stringValue(item, "ruleId"));
+        response.setTenantId(stringValue(item, "tenantId"));
+        response.setPriority(intValue(item, "priority"));
+        response.setEnabled(booleanValue(item, "enabled"));
+        response.setName(stringValue(item, "name"));
+        response.setDescription(stringValue(item, "description"));
+        response.setSourceSystem(stringValue(item, "sourceSystem"));
+        response.setStopProcessing(booleanValue(item, "stopProcessing"));
+        response.setBuilderVersion(stringValue(item, "builderVersion"));
+        response.setBuilderSnapshotJson(stringValue(item, "builderSnapshotJson"));
+        response.setCreatedAt(stringValue(item, "createdAt"));
+        response.setUpdatedAt(stringValue(item, "updatedAt"));
+
+        String matchJson = stringValue(item, "matchJson");
+        if (StringUtils.hasText(matchJson)) {
+            try {
+                response.setMatch(objectMapper.readValue(matchJson, RoutingRule.Match.class));
+            } catch (JsonProcessingException exception) {
+                response.setMatch(new RoutingRule.Match());
+            }
+        }
+
+        String actionJson = stringValue(item, "actionJson");
+        if (StringUtils.hasText(actionJson)) {
+            try {
+                response.setAction(objectMapper.readValue(actionJson, RoutingRule.Action.class));
+            } catch (JsonProcessingException exception) {
+                response.setAction(new RoutingRule.Action());
+            }
+        }
+
+        return response;
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Failed to serialize JSON payload.", exception);
+        }
+    }
+
     // Helper methods for extracting string and boolean values from DynamoDB items
 
     private String stringValue(Map<String, AttributeValue> item, String key) {
         AttributeValue value = item.get(key);
         return value == null ? null : value.s();
+    }
+
+    private int intValue(Map<String, AttributeValue> item, String key) {
+        String value = stringValue(item, key);
+        if (!StringUtils.hasText(value)) {
+            return 0;
+        }
+
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException exception) {
+            return 0;
+        }
     }
 
     private boolean booleanValue(Map<String, AttributeValue> item, String key) {

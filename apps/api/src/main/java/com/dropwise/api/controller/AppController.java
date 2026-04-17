@@ -4,18 +4,24 @@ import java.util.Map;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.dropwise.api.model.ConnectwiseSecretRequest;
 import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ActivityEvent;
+import com.dropwise.api.model.ReorderRulesRequest;
+import com.dropwise.api.model.RoutingRule;
 import com.dropwise.api.model.SaveSecretResponse;
+import com.dropwise.api.model.SlackChannelSummary;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TenantConfigRequest;
 import com.dropwise.api.model.TenantConfigResponse;
@@ -74,6 +80,46 @@ public class AppController {
     public List<ActivityEvent> listActivity(@PathVariable String tenantId, @org.springframework.web.bind.annotation.RequestParam(value = "limit", defaultValue = "25") int limit
     ) {
         return appService.listActivity(tenantId, limit);
+    }
+
+    @GetMapping("/rules/{tenantId}")
+    public List<RoutingRule> listRules(@PathVariable String tenantId) {
+        return appService.listRules(tenantId);
+    }
+
+    @PostMapping("/rules")
+    @ResponseStatus(HttpStatus.CREATED)
+    public RoutingRule createRule(@RequestBody RoutingRule rule) {
+        return appService.createRule(rule);
+    }
+
+    @PutMapping("/rules/{tenantId}/{ruleId}")
+    public RoutingRule updateRule(
+        @PathVariable String tenantId,
+        @PathVariable String ruleId,
+        @RequestBody RoutingRule rule
+    ) {
+        return appService.updateRule(tenantId, ruleId, rule);
+    }
+
+    @DeleteMapping("/rules/{tenantId}/{ruleId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteRule(
+        @PathVariable String tenantId,
+        @PathVariable String ruleId,
+        @RequestParam int priority
+    ) {
+        appService.deleteRule(tenantId, ruleId, priority);
+    }
+
+    @PostMapping("/rules/reorder")
+    public List<RoutingRule> reorderRules(@RequestBody ReorderRulesRequest request) {
+        return appService.reorderRules(request);
+    }
+
+    @GetMapping("/slack/channels/{tenantId}")
+    public List<SlackChannelSummary> listSlackChannels(@PathVariable String tenantId) {
+        return appService.listSlackChannels(tenantId);
     }
 
     /**

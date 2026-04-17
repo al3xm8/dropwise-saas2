@@ -1,3 +1,9 @@
+import {
+  loadFeedEvents,
+  type FeedEventStatus,
+  type FeedEvent,
+} from "@/lib/feed";
+
 export type DashboardTimeFilter = "24h" | "7d" | "30d" | "all";
 
 export type DashboardStat = {
@@ -6,13 +12,19 @@ export type DashboardStat = {
   detail: string;
 };
 
-export type DashboardActivityStatus = "success" | "failed" | "unmatched";
+export type DashboardActivityStatus = FeedEventStatus;
 
 export type DashboardActivityItem = {
+  id: string;
+  createdAt: string;
   subject: string;
+  description: string;
   company: string;
   source: string;
+  sourceTicketId: string;
   destination: string;
+  routingRule: string;
+  ticketStatus: string;
   author: string;
   assignee: string;
   status: DashboardActivityStatus;
@@ -35,6 +47,14 @@ export type DashboardSnapshot = {
   systems: DashboardSystemItem[];
 };
 
+type TenantConfigResponse = {
+  connectwiseConnected?: boolean;
+  slackConnected?: boolean;
+  botInvited?: boolean;
+};
+
+const MAX_DASHBOARD_EVENTS = 500;
+
 export const dashboardFilterOptions: DashboardTimeFilter[] = [
   "24h",
   "7d",
@@ -42,438 +62,252 @@ export const dashboardFilterOptions: DashboardTimeFilter[] = [
   "all",
 ];
 
-export const dashboardData: Record<DashboardTimeFilter, DashboardSnapshot> = {
-  "24h": {
-    stats: [
-      {
-        title: "Total Rules",
-        value: "12",
-        detail: "Active routing rules currently evaluating inbound ticket traffic.",
-      },
-      {
-        title: "Active Integrations",
-        value: "2",
-        detail: "ConnectWise and Slack are both connected for this workspace.",
-      },
-      {
-        title: "Tickets Routed",
-        value: "38",
-        detail: "Tickets delivered into active destinations during the last 24 hours.",
-      },
-      {
-        title: "Unmatched Tickets",
-        value: "4",
-        detail: "Tickets that entered without a matching route and need follow-up.",
-      },
-      {
-        title: "Rules Passing",
-        value: "91%",
-        detail: "Rule evaluations that ended in a clean delivery without exceptions.",
-      },
-      {
-        title: "Failed Tickets",
-        value: "3",
-        detail: "Tickets that matched a route but did not post cleanly to the destination.",
-      },
-      {
-        title: "Needs Response",
-        value: "11",
-        detail: "Open routed tickets still waiting on a technician response.",
-      },
-      {
-        title: "Top Destination",
-        value: "#service-priority",
-        detail: "Most-used destination for routed tickets in the selected window.",
-      },
-    ],
-    activity: [
-      {
-        subject: "Accounting workstation cannot authenticate to VPN",
-        company: "Northfield Dental Group",
-        source: "ConnectWise",
-        destination: "#service-priority",
-        author: "Sonia Kim",
-        assignee: "Chris Nolan",
-        status: "success",
-      },
-      {
-        subject: "New user cannot sign in after Microsoft 365 password reset",
-        company: "Crestline Logistics",
-        source: "ConnectWise",
-        destination: "#identity-access",
-        author: "Lauren Cruz",
-        assignee: "Unassigned",
-        status: "success",
-      },
-      {
-        subject: "Recurring print spooler failure on AP workstation",
-        company: "Pine Harbor Advisory",
-        source: "ConnectWise",
-        destination: "#service-priority",
-        author: "Ethan Brooks",
-        assignee: "Drew Patel",
-        status: "success",
-      },
-      {
-        subject: "Vendor invoice email blocked by quarantine policy",
-        company: "Maple Ridge Architects",
-        source: "ConnectWise",
-        destination: "No matching route",
-        author: "Nina Alvarez",
-        assignee: "Unassigned",
-        status: "unmatched",
-      },
-      {
-        subject: "After-hours internet outage update for branch office",
-        company: "BrightPath Clinics",
-        source: "ConnectWise",
-        destination: "#after-hours",
-        author: "Marcus Lee",
-        assignee: "Tori Nguyen",
-        status: "failed",
-      },
-    ],
-    systems: [
-      {
-        name: "ConnectWise",
-        status: "Operational",
-        detail: "Inbound sync is current and ticket updates are arriving normally.",
-      },
-      {
-        name: "Slack",
-        status: "Operational",
-        detail: "Destination posting is healthy aside from three delivery exceptions.",
-      },
-      {
-        name: "Feed",
-        status: "Attention needed",
-        detail: "Four unmatched tickets and three failed deliveries need review.",
-      },
-    ],
-  },
-  "7d": {
-    stats: [
-      {
-        title: "Total Rules",
-        value: "12",
-        detail: "Active routing rules currently evaluating inbound ticket traffic.",
-      },
-      {
-        title: "Active Integrations",
-        value: "2",
-        detail: "ConnectWise and Slack are both connected for this workspace.",
-      },
-      {
-        title: "Tickets Routed",
-        value: "214",
-        detail: "Tickets delivered into active destinations over the last 7 days.",
-      },
-      {
-        title: "Unmatched Tickets",
-        value: "16",
-        detail: "Tickets that entered without a matching route and need follow-up.",
-      },
-      {
-        title: "Rules Passing",
-        value: "94%",
-        detail: "Rule evaluations that ended in a clean delivery without exceptions.",
-      },
-      {
-        title: "Failed Tickets",
-        value: "12",
-        detail: "Tickets that matched a route but did not post cleanly to the destination.",
-      },
-      {
-        title: "Needs Response",
-        value: "29",
-        detail: "Open routed tickets still waiting on a technician response.",
-      },
-      {
-        title: "Top Destination",
-        value: "#service-dispatch",
-        detail: "Most-used destination for routed tickets in the selected window.",
-      },
-    ],
-    activity: [
-      {
-        subject: "Office manager cannot access payroll share after VPN reconnect",
-        company: "Lakeview Manufacturing",
-        source: "ConnectWise",
-        destination: "#service-priority",
-        author: "Jamie Torres",
-        assignee: "Chris Nolan",
-        status: "success",
-      },
-      {
-        subject: "Conference room display drops signal after dock wake",
-        company: "Willow Creek Legal",
-        source: "ConnectWise",
-        destination: "#service-dispatch",
-        author: "Kayla Simmons",
-        assignee: "Drew Patel",
-        status: "success",
-      },
-      {
-        subject: "Voicemail-to-email delivery delayed for front office queue",
-        company: "Harbor West Advisors",
-        source: "ConnectWise",
-        destination: "#communications-support",
-        author: "Eric Foster",
-        assignee: "Maya Chen",
-        status: "success",
-      },
-      {
-        subject: "Guest Wi-Fi outage reported by front desk manager",
-        company: "Summit Hospitality Group",
-        source: "ConnectWise",
-        destination: "No matching route",
-        author: "Paige Romero",
-        assignee: "Unassigned",
-        status: "unmatched",
-      },
-      {
-        subject: "Warehouse scanner station losing mapped drives after reconnect",
-        company: "Redstone Distribution",
-        source: "ConnectWise",
-        destination: "#service-dispatch",
-        author: "Brandon White",
-        assignee: "Tori Nguyen",
-        status: "failed",
-      },
-    ],
-    systems: [
-      {
-        name: "ConnectWise",
-        status: "Operational",
-        detail: "Inbound sync is current and board updates are landing normally.",
-      },
-      {
-        name: "Slack",
-        status: "Operational",
-        detail: "Destination posting is stable with a small number of retried failures.",
-      },
-      {
-        name: "Feed",
-        status: "Attention needed",
-        detail: "Sixteen unmatched tickets and twelve delivery failures still need review.",
-      },
-    ],
-  },
-  "30d": {
-    stats: [
-      {
-        title: "Total Rules",
-        value: "12",
-        detail: "Active routing rules currently evaluating inbound ticket traffic.",
-      },
-      {
-        title: "Active Integrations",
-        value: "2",
-        detail: "ConnectWise and Slack are both connected for this workspace.",
-      },
-      {
-        title: "Tickets Routed",
-        value: "892",
-        detail: "Tickets delivered into active destinations over the last 30 days.",
-      },
-      {
-        title: "Unmatched Tickets",
-        value: "43",
-        detail: "Tickets that entered without a matching route and need follow-up.",
-      },
-      {
-        title: "Rules Passing",
-        value: "95%",
-        detail: "Rule evaluations that ended in a clean delivery without exceptions.",
-      },
-      {
-        title: "Failed Tickets",
-        value: "27",
-        detail: "Tickets that matched a route but did not post cleanly to the destination.",
-      },
-      {
-        title: "Needs Response",
-        value: "76",
-        detail: "Open routed tickets still waiting on a technician response.",
-      },
-      {
-        title: "Top Destination",
-        value: "#service-dispatch",
-        detail: "Most-used destination for routed tickets in the selected window.",
-      },
-    ],
-    activity: [
-      {
-        subject: "Vendor portal MFA lockout for controller workstation",
-        company: "Oakline Pediatrics",
-        source: "ConnectWise",
-        destination: "#identity-access",
-        author: "Sofia Ramirez",
-        assignee: "Maya Chen",
-        status: "success",
-      },
-      {
-        subject: "Remote user cannot reach line-of-business app over VPN",
-        company: "Northbridge Supply",
-        source: "ConnectWise",
-        destination: "#service-priority",
-        author: "Tyler Green",
-        assignee: "Chris Nolan",
-        status: "success",
-      },
-      {
-        subject: "Branch printer defaults to offline after nightly reboot",
-        company: "Sterling Field Services",
-        source: "ConnectWise",
-        destination: "#service-dispatch",
-        author: "Allison Reed",
-        assignee: "Drew Patel",
-        status: "success",
-      },
-      {
-        subject: "Mailbox forwarding request for terminated staff account",
-        company: "Bayside Property Group",
-        source: "ConnectWise",
-        destination: "No matching route",
-        author: "Jordan Price",
-        assignee: "Unassigned",
-        status: "unmatched",
-      },
-      {
-        subject: "Monthly patching exceptions need review for lab endpoints",
-        company: "Lumen Research Labs",
-        source: "ConnectWise",
-        destination: "#infra-ops",
-        author: "Cameron Bell",
-        assignee: "Tori Nguyen",
-        status: "failed",
-      },
-    ],
-    systems: [
-      {
-        name: "ConnectWise",
-        status: "Operational",
-        detail: "Inbound sync is current and ticket changes are flowing without backlog.",
-      },
-      {
-        name: "Slack",
-        status: "Operational",
-        detail: "Destination posting remains healthy with a low failure rate.",
-      },
-      {
-        name: "Feed",
-        status: "Attention needed",
-        detail: "Long-tail routing gaps are still generating unmatched tickets each week.",
-      },
-    ],
-  },
-  all: {
-    stats: [
-      {
-        title: "Total Rules",
-        value: "12",
-        detail: "Active routing rules currently evaluating inbound ticket traffic.",
-      },
-      {
-        title: "Active Integrations",
-        value: "2",
-        detail: "ConnectWise and Slack are both connected for this workspace.",
-      },
-      {
-        title: "Tickets Routed",
-        value: "2,486",
-        detail: "Tickets delivered into active destinations since workspace setup.",
-      },
-      {
-        title: "Unmatched Tickets",
-        value: "128",
-        detail: "Tickets that entered without a matching route since workspace setup.",
-      },
-      {
-        title: "Rules Passing",
-        value: "96%",
-        detail: "Rule evaluations that ended in a clean delivery without exceptions.",
-      },
-      {
-        title: "Failed Tickets",
-        value: "64",
-        detail: "Tickets that matched a route but did not post cleanly to the destination.",
-      },
-      {
-        title: "Needs Response",
-        value: "163",
-        detail: "Open routed tickets still waiting on a technician response.",
-      },
-      {
-        title: "Top Destination",
-        value: "#service-dispatch",
-        detail: "Most-used destination for routed tickets in the selected window.",
-      },
-    ],
-    activity: [
-      {
-        subject:
-          "Executive mailbox stops syncing on mobile after conditional access prompt",
-        company: "Riverview Holdings",
-        source: "ConnectWise",
-        destination: "#exec-support",
-        author: "Hannah Cooper",
-        assignee: "Maya Chen",
-        status: "success",
-      },
-      {
-        subject: "Line-of-business database timeout on warehouse floor terminals",
-        company: "Canyon Freight Partners",
-        source: "ConnectWise",
-        destination: "#service-priority",
-        author: "Noah Peterson",
-        assignee: "Chris Nolan",
-        status: "success",
-      },
-      {
-        subject: "Payroll export failing after endpoint certificate rotation",
-        company: "Elm Street Medical",
-        source: "ConnectWise",
-        destination: "#finance-systems",
-        author: "Olivia Bennett",
-        assignee: "Drew Patel",
-        status: "failed",
-      },
-      {
-        subject: "Facilities badge printer request for temporary contractor access",
-        company: "Granite Commercial",
-        source: "ConnectWise",
-        destination: "No matching route",
-        author: "Grace Morgan",
-        assignee: "Unassigned",
-        status: "unmatched",
-      },
-      {
-        subject: "Site-to-site VPN instability at west regional office",
-        company: "Westport Banking Services",
-        source: "ConnectWise",
-        destination: "#infra-ops",
-        author: "Nathan Flores",
-        assignee: "Tori Nguyen",
-        status: "success",
-      },
-    ],
-    systems: [
-      {
-        name: "ConnectWise",
-        status: "Operational",
-        detail: "Historical sync is healthy and ongoing ticket intake remains stable.",
-      },
-      {
-        name: "Slack",
-        status: "Operational",
-        detail: "Destination delivery is stable, with failures concentrated in a few recurring routes.",
-      },
-      {
-        name: "Feed",
-        status: "Attention needed",
-        detail: "Legacy routing gaps still account for most unmatched and failed ticket history.",
-      },
-    ],
-  },
-};
+function apiBaseUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+  return "http://localhost:8080";
+}
+
+function filterStartDate(filter: DashboardTimeFilter) {
+  if (filter === "all") {
+    return null;
+  }
+
+  const start = new Date();
+  if (filter === "24h") {
+    start.setHours(start.getHours() - 24);
+  } else if (filter === "7d") {
+    start.setDate(start.getDate() - 7);
+  } else {
+    start.setDate(start.getDate() - 30);
+  }
+  return start;
+}
+
+function eventTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function filterEventsByWindow(events: FeedEvent[], filter: DashboardTimeFilter) {
+  const start = filterStartDate(filter);
+  if (!start) {
+    return events;
+  }
+
+  const startTime = start.getTime();
+  return events.filter((event) => eventTimestamp(event.createdAt) >= startTime);
+}
+
+function latestEventsByTicket(events: FeedEvent[]) {
+  const grouped = new Map<string, FeedEvent>();
+
+  for (const event of events) {
+    const ticketKey = `${event.sourceSystem}:${event.sourceTicketId}`;
+    const existing = grouped.get(ticketKey);
+    if (!existing || eventTimestamp(event.createdAt) >= eventTimestamp(existing.createdAt)) {
+      grouped.set(ticketKey, event);
+    }
+  }
+
+  return [...grouped.values()].sort(
+    (left, right) => eventTimestamp(right.createdAt) - eventTimestamp(left.createdAt),
+  );
+}
+
+function countByStatus(events: FeedEvent[]) {
+  return {
+    success: events.filter((event) => event.status === "success").length,
+    failed: events.filter((event) => event.status === "failed").length,
+    unmatched: events.filter((event) => event.status === "unmatched").length,
+    needsReview: events.filter((event) => event.status === "needs_review").length,
+  };
+}
+
+function topDestination(events: FeedEvent[]) {
+  const counts = new Map<string, number>();
+
+  for (const event of events) {
+    if (!event.destinationLabel || event.destinationLabel === "Pending rule evaluation") {
+      continue;
+    }
+
+    counts.set(event.destinationLabel, (counts.get(event.destinationLabel) ?? 0) + 1);
+  }
+
+  let winner = "Pending rule evaluation";
+  let max = 0;
+
+  for (const [destination, count] of counts.entries()) {
+    if (count > max) {
+      winner = destination;
+      max = count;
+    }
+  }
+
+  return winner;
+}
+
+function distinctRulesSeen(events: FeedEvent[]) {
+  return new Set(
+    events
+      .map((event) => event.routingRule)
+      .filter((value) => value && value !== "Pending rule evaluation"),
+  ).size;
+}
+
+function formatPassingRate(successCount: number, failedCount: number, unmatchedCount: number) {
+  const totalEvaluated = successCount + failedCount + unmatchedCount;
+  if (totalEvaluated === 0) {
+    return "0%";
+  }
+
+  return `${Math.round((successCount / totalEvaluated) * 100)}%`;
+}
+
+function buildStats(
+  latestEvents: FeedEvent[],
+  tenantConfig: TenantConfigResponse | null,
+): DashboardStat[] {
+  const counts = countByStatus(latestEvents);
+  const integrationCount = Number(Boolean(tenantConfig?.connectwiseConnected))
+    + Number(Boolean(tenantConfig?.slackConnected));
+  const routedCount = counts.success;
+  const topRoute = topDestination(latestEvents);
+  const rulesSeen = distinctRulesSeen(latestEvents);
+
+  return [
+    {
+      title: "Rules Seen",
+      value: String(rulesSeen),
+      detail: "Distinct routing rules observed in live ticket activity for this window.",
+    },
+    {
+      title: "Active Integrations",
+      value: String(integrationCount),
+      detail: "Connected integrations currently available for this workspace.",
+    },
+    {
+      title: "Tickets Routed",
+      value: String(routedCount),
+      detail: "Tickets whose latest live event ended in a successful route.",
+    },
+    {
+      title: "Unmatched Tickets",
+      value: String(counts.unmatched),
+      detail: "Tickets whose latest live event has no matching route.",
+    },
+    {
+      title: "Rules Passing",
+      value: formatPassingRate(counts.success, counts.failed, counts.unmatched),
+      detail: "Share of latest live ticket outcomes that ended in a successful route.",
+    },
+    {
+      title: "Failed Tickets",
+      value: String(counts.failed),
+      detail: "Tickets whose latest live event failed during routing or delivery.",
+    },
+    {
+      title: "Needs Response",
+      value: String(counts.needsReview),
+      detail: "Tickets whose latest live event is still waiting on follow-up or review.",
+    },
+    {
+      title: "Top Destination",
+      value: topRoute,
+      detail: "Most-used destination across the latest live ticket outcomes in this window.",
+    },
+  ];
+}
+
+function buildActivity(latestEvents: FeedEvent[]): DashboardActivityItem[] {
+  return latestEvents.slice(0, 5).map((event) => ({
+    id: event.id,
+    createdAt: event.createdAt,
+    subject: event.title,
+    description: event.description,
+    company: event.company,
+    source: event.sourceSystem,
+    sourceTicketId: event.sourceTicketId,
+    destination: event.destinationLabel,
+    routingRule: event.routingRule,
+    ticketStatus: event.ticketStatus,
+    author: event.author,
+    assignee: event.assignee,
+    status: event.status,
+  }));
+}
+
+function buildSystems(
+  latestEvents: FeedEvent[],
+  tenantConfig: TenantConfigResponse | null,
+): DashboardSystemItem[] {
+  const counts = countByStatus(latestEvents);
+
+  return [
+    {
+      name: "ConnectWise",
+      status: tenantConfig?.connectwiseConnected ? "Operational" : "Attention needed",
+      detail: tenantConfig?.connectwiseConnected
+        ? `Live ticket intake is connected with ${latestEvents.length} ticket snapshots in the selected window.`
+        : "ConnectWise is not fully connected for this workspace.",
+    },
+    {
+      name: "Slack",
+      status:
+        tenantConfig?.slackConnected && tenantConfig?.botInvited
+          ? counts.failed > 0
+            ? "Attention needed"
+            : "Operational"
+          : "Attention needed",
+      detail:
+        tenantConfig?.slackConnected && tenantConfig?.botInvited
+          ? counts.failed > 0
+            ? `${counts.failed} tickets currently show failed delivery outcomes.`
+            : "Slack delivery is connected and no failed ticket outcomes are showing in this window."
+          : "Slack is not fully connected or the bot has not been invited yet.",
+    },
+    {
+      name: "Feed",
+      status: counts.failed > 0 || counts.unmatched > 0 ? "Attention needed" : "Operational",
+      detail:
+        counts.failed > 0 || counts.unmatched > 0
+          ? `${counts.unmatched} unmatched tickets and ${counts.failed} failed tickets currently need review.`
+          : "Feed is reflecting current live ticket activity without unmatched or failed outcomes in this window.",
+    },
+  ];
+}
+
+async function loadTenantConfig(tenantId: string): Promise<TenantConfigResponse | null> {
+  const response = await fetch(
+    `${apiBaseUrl()}/api/app/tenant-config/${encodeURIComponent(tenantId)}`,
+    { cache: "no-store" },
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return (await response.json()) as TenantConfigResponse;
+}
+
+export async function loadDashboardSnapshot(
+  tenantId: string,
+  filter: DashboardTimeFilter,
+): Promise<DashboardSnapshot> {
+  const [events, tenantConfig] = await Promise.all([
+    loadFeedEvents(tenantId, MAX_DASHBOARD_EVENTS),
+    loadTenantConfig(tenantId),
+  ]);
+
+  const windowEvents = filterEventsByWindow(events, filter);
+  const latestEvents = latestEventsByTicket(windowEvents);
+
+  return {
+    stats: buildStats(latestEvents, tenantConfig),
+    activity: buildActivity(latestEvents),
+    systems: buildSystems(latestEvents, tenantConfig),
+  };
+}
