@@ -2,11 +2,13 @@ package com.dropwise.api.service;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,8 @@ import org.springframework.web.server.ResponseStatusException;
 import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ConnectwiseTicketResponse;
+import com.dropwise.api.model.RoutingRule;
+import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TicketSnapshot;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -35,6 +39,7 @@ public class ConnectwiseService {
     private static final int CALLBACK_OBJECT_ID = 1;
     private static final String CALLBACK_TYPE = "Ticket";
     private static final String CALLBACK_LEVEL = "Board";
+    private static final long SLACK_TOKEN_REFRESH_BUFFER_MS = 300_000L;
 
     public static class ConnectwiseCredentials {
         private String connectwiseCompanyId;
@@ -94,19 +99,37 @@ public class ConnectwiseService {
         private Boolean inactiveFlag;
     }
 
+    private static class SlackMessageResult {
+        private String channelId;
+        private String messageTs;
+    }
+
+    private static class RuleExecutionResult {
+        private String status;
+        private String description;
+        private String destinationLabel;
+        private String routingRuleId;
+    }
+
     private final AWSService awsService;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final String publicApiBaseUrl;
+    private final String slackClientId;
+    private final String slackClientSecret;
 
     public ConnectwiseService(
         AWSService awsService,
-        @org.springframework.beans.factory.annotation.Value("${app.public-api-base-url:http://localhost:8080}") String publicApiBaseUrl
+        @org.springframework.beans.factory.annotation.Value("${app.public-api-base-url:http://localhost:8080}") String publicApiBaseUrl,
+        @org.springframework.beans.factory.annotation.Value("${slack.client.id:}") String slackClientId,
+        @org.springframework.beans.factory.annotation.Value("${slack.client.secret:}") String slackClientSecret
     ) {
         this.awsService = awsService;
         this.objectMapper = new ObjectMapper();
         this.httpClient = HttpClient.newHttpClient();
         this.publicApiBaseUrl = publicApiBaseUrl;
+        this.slackClientId = slackClientId;
+        this.slackClientSecret = slackClientSecret;
     }
 
     public String onNewEvent(String recordId, Map<String, Object> payload) throws IOException, InterruptedException {
@@ -168,8 +191,11 @@ public class ConnectwiseService {
             throw exception;
         }
 
-        awsService.saveTicketSnapshot(buildTicketSnapshot(tenantId.get(), ticket));
-        awsService.saveActivityEvent(buildReviewEvent(tenantId.get(), ticket, action));
+        String eventTimestamp = Instant.now().toString();
+        RuleExecutionResult executionResult = executeRoutingRules(tenantId.get(), ticket, eventTimestamp);
+
+        awsService.saveTicketSnapshot(buildTicketSnapshot(tenantId.get(), ticket, executionResult, eventTimestamp));
+        awsService.saveActivityEvent(buildActivityEvent(tenantId.get(), ticket, action, executionResult, eventTimestamp));
 
         log.info("Finished processing event for ticketId={} summary={}", ticketId, ticket.getSummary());
         return "Processed ConnectWise " + action + " event for ticketId: " + ticketId;
@@ -178,6 +204,15 @@ public class ConnectwiseService {
     public ConnectwiseWebhookRegistrationResponse registerWebhook(String tenantId) throws IOException, InterruptedException {
         if (!StringUtils.hasText(tenantId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing tenantId.");
+        }
+
+        Optional<String> existingWebhookId = awsService.loadConnectwiseWebhookId(tenantId);
+        if (existingWebhookId.isPresent()) {
+            return new ConnectwiseWebhookRegistrationResponse(
+                true,
+                existingWebhookId.get(),
+                "ConnectWise webhook already configured."
+            );
         }
 
         Optional<ConnectwiseCredentials> credentials = awsService.loadConnectwiseCredentials(tenantId);
@@ -332,7 +367,12 @@ public class ConnectwiseService {
         return "Basic " + Base64.getEncoder().encodeToString(rawAuth.getBytes(StandardCharsets.UTF_8));
     }
 
-    private TicketSnapshot buildTicketSnapshot(String tenantId, ConnectwiseTicketResponse ticket) {
+    private TicketSnapshot buildTicketSnapshot(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        RuleExecutionResult executionResult,
+        String eventTimestamp
+    ) {
         TicketSnapshot snapshot = new TicketSnapshot();
         snapshot.setTenantId(tenantId);
         snapshot.setTicketId(String.valueOf(ticket.getId()));
@@ -343,29 +383,36 @@ public class ConnectwiseService {
         snapshot.setTicketStatus(ticket.getStatus() != null ? ticket.getStatus().getName() : "Unknown");
         snapshot.setContact(ticket.getContact() != null ? ticket.getContact().getName() : "Unknown contact");
         snapshot.setAssignee(ticket.getOwner() != null ? ticket.getOwner().getIdentifier() : "Unassigned");
-        snapshot.setLastEventStatus("needs_review");
-        snapshot.setLastEventAt(Instant.now().toString());
-        snapshot.setLastDestinationLabel("Pending rule evaluation");
-        snapshot.setLastRoutingRuleId(null);
+        snapshot.setLastEventStatus(executionResult.status);
+        snapshot.setLastEventAt(eventTimestamp);
+        snapshot.setLastDestinationLabel(executionResult.destinationLabel);
+        snapshot.setLastRoutingRuleId(executionResult.routingRuleId);
         return snapshot;
     }
 
-    private ActivityEvent buildReviewEvent(String tenantId, ConnectwiseTicketResponse ticket, String action) {
+    private ActivityEvent buildActivityEvent(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        String action,
+        RuleExecutionResult executionResult,
+        String eventTimestamp
+    ) {
         ActivityEvent event = new ActivityEvent();
         event.setTenantId(tenantId);
         event.setSourceSystem("connectwise");
         event.setSourceTicketId(String.valueOf(ticket.getId()));
-        event.setStatus("needs_review");
+        event.setStatus(executionResult.status);
         event.setTitle(valueOrFallback(ticket.getSummary(), "ConnectWise ticket"));
-        event.setDescription("Received ConnectWise " + action.toLowerCase() + " event and stored ticket activity.");
+        event.setDescription(buildEventDescription(action, executionResult.description));
         event.setTicketSummary(valueOrFallback(ticket.getSummary(), "ConnectWise ticket"));
         event.setBoard(ticket.getBoard() != null ? ticket.getBoard().getName() : "Unassigned");
         event.setTicketStatus(ticket.getStatus() != null ? ticket.getStatus().getName() : "Unknown");
         event.setCompany(ticket.getCompany() != null ? ticket.getCompany().getIdentifier() : "Unknown company");
         event.setContact(ticket.getContact() != null ? ticket.getContact().getName() : "Unknown contact");
         event.setAssignee(ticket.getOwner() != null ? ticket.getOwner().getIdentifier() : "Unassigned");
-        event.setDestinationLabel("Pending rule evaluation");
-        event.setCreatedAt(Instant.now().toString());
+        event.setDestinationLabel(executionResult.destinationLabel);
+        event.setRoutingRuleId(executionResult.routingRuleId);
+        event.setCreatedAt(eventTimestamp);
         return event;
     }
 
@@ -383,9 +430,391 @@ public class ConnectwiseService {
         event.setCompany("Unknown company");
         event.setContact("Unknown contact");
         event.setAssignee("Unassigned");
-        event.setDestinationLabel("Pending rule evaluation");
+        event.setDestinationLabel(null);
         event.setCreatedAt(Instant.now().toString());
         return event;
+    }
+
+    private RuleExecutionResult executeRoutingRules(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        String eventTimestamp
+    ) {
+        List<RoutingRule> activeRules = new ArrayList<>();
+        for (RoutingRule rule : awsService.listRules(tenantId)) {
+            if (!rule.isEnabled()) {
+                continue;
+            }
+            if (StringUtils.hasText(rule.getSourceSystem())
+                && !"connectwise".equalsIgnoreCase(rule.getSourceSystem())) {
+                continue;
+            }
+            activeRules.add(rule);
+        }
+
+        for (RoutingRule rule : activeRules) {
+            if (!matchesRule(rule, ticket)) {
+                continue;
+            }
+            return routeMatchedRule(tenantId, ticket, rule, eventTimestamp);
+        }
+
+        RuleExecutionResult result = new RuleExecutionResult();
+        result.status = "unmatched";
+        result.description = "No active routing rule matched this ticket.";
+        result.destinationLabel = null;
+        result.routingRuleId = null;
+        return result;
+    }
+
+    private RuleExecutionResult routeMatchedRule(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        RoutingRule rule,
+        String eventTimestamp
+    ) {
+        String channelId = rule.getAction() != null ? trim(rule.getAction().getTargetChannelId()) : null;
+        if (!StringUtils.hasText(channelId)) {
+            RuleExecutionResult result = new RuleExecutionResult();
+            result.status = "failed";
+            result.description = "Matched rule \"" + valueOrFallback(rule.getName(), "Unnamed rule")
+                + "\" but no Slack destination was configured.";
+            result.destinationLabel = null;
+            result.routingRuleId = rule.getRuleId();
+            return result;
+        }
+
+        try {
+            SlackMessageResult messageResult = postTicketToSlack(tenantId, ticket, channelId, eventTimestamp);
+            RuleExecutionResult result = new RuleExecutionResult();
+            result.status = "success";
+            result.description = "Matched rule \"" + valueOrFallback(rule.getName(), "Unnamed rule")
+                + "\" and routed to Slack.";
+            result.destinationLabel = valueOrFallback(messageResult.channelId, channelId);
+            result.routingRuleId = rule.getRuleId();
+            return result;
+        } catch (ResponseStatusException exception) {
+            log.warn("Slack delivery failed for tenant={} ticketId={} ruleId={}: {}",
+                tenantId,
+                ticket.getId(),
+                rule.getRuleId(),
+                exception.getReason());
+
+            RuleExecutionResult result = new RuleExecutionResult();
+            result.status = "failed";
+            result.description = "Matched rule \"" + valueOrFallback(rule.getName(), "Unnamed rule")
+                + "\" but Slack delivery failed: " + valueOrFallback(exception.getReason(), "unknown error");
+            result.destinationLabel = channelId;
+            result.routingRuleId = rule.getRuleId();
+            return result;
+        }
+    }
+
+    private boolean matchesRule(RoutingRule rule, ConnectwiseTicketResponse ticket) {
+        if (rule.getMatch() == null || rule.getMatch().getConditions() == null || rule.getMatch().getConditions().isEmpty()) {
+            return false;
+        }
+
+        boolean useOr = "OR".equalsIgnoreCase(trim(rule.getMatch().getJoinOperator()));
+        boolean matched = useOr ? false : true;
+
+        for (RoutingRule.Condition condition : rule.getMatch().getConditions()) {
+            boolean conditionMatches = matchesCondition(condition, ticket);
+            if (useOr && conditionMatches) {
+                return true;
+            }
+            if (!useOr && !conditionMatches) {
+                return false;
+            }
+            matched = conditionMatches;
+        }
+
+        return matched;
+    }
+
+    private boolean matchesCondition(RoutingRule.Condition condition, ConnectwiseTicketResponse ticket) {
+        if (condition == null) {
+            return false;
+        }
+
+        String actualValue = normalizeForMatch(ticketFieldValue(ticket, condition.getField()));
+        String expectedValue = normalizeForMatch(condition.getValue());
+        String operator = trim(condition.getOperator());
+
+        if (!StringUtils.hasText(expectedValue) || !StringUtils.hasText(operator)) {
+            return false;
+        }
+
+        return switch (operator.toLowerCase()) {
+            case "equals" -> actualValue.equals(expectedValue);
+            case "not equals" -> !actualValue.equals(expectedValue);
+            case "contains" -> actualValue.contains(expectedValue);
+            case "starts with" -> actualValue.startsWith(expectedValue);
+            default -> false;
+        };
+    }
+
+    private String ticketFieldValue(ConnectwiseTicketResponse ticket, String field) {
+        String normalizedField = trim(field);
+        if (!StringUtils.hasText(normalizedField)) {
+            return "";
+        }
+
+        return switch (normalizedField) {
+            case "ticketSummary" -> valueOrFallback(ticket.getSummary(), "");
+            case "company" -> ticket.getCompany() != null ? valueOrFallback(ticket.getCompany().getIdentifier(), "") : "";
+            case "board" -> ticket.getBoard() != null ? valueOrFallback(ticket.getBoard().getName(), "") : "";
+            case "status" -> ticket.getStatus() != null ? valueOrFallback(ticket.getStatus().getName(), "") : "";
+            case "contact" -> ticket.getContact() != null ? valueOrFallback(ticket.getContact().getName(), "") : "";
+            case "assignee" -> ticket.getOwner() != null ? valueOrFallback(ticket.getOwner().getIdentifier(), "") : "";
+            default -> "";
+        };
+    }
+
+    private String normalizeForMatch(String value) {
+        return value == null ? "" : value.trim().toLowerCase();
+    }
+
+    private String buildEventDescription(String action, String outcomeDescription) {
+        return "Received ConnectWise " + action.toLowerCase() + " event. " + outcomeDescription;
+    }
+
+    private SlackMessageResult postTicketToSlack(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        String channelId,
+        String eventTimestamp
+    ) {
+        SlackSecretRequest secret = awsService.loadSlackSecret(tenantId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack bot token not found."));
+        String botToken = getValidSlackBotToken(tenantId, secret);
+
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "channel", channelId,
+                "text", buildSlackMessageText(ticket, eventTimestamp)
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.postMessage"))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message post failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Object okValue = body.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                String errorCode = body.get("error") instanceof String error ? error : response.body();
+                if ("token_expired".equals(errorCode)) {
+                    String refreshedToken = refreshSlackBotToken(tenantId, secret);
+                    return retryPostTicketToSlack(ticket, channelId, eventTimestamp, refreshedToken);
+                }
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message post failed. Body: " + response.body()
+                );
+            }
+
+            SlackMessageResult result = new SlackMessageResult();
+            result.channelId = body.get("channel") instanceof String postedChannelId ? postedChannelId : channelId;
+            result.messageTs = body.get("ts") instanceof String ts ? ts : null;
+            return result;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message post failed: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message post interrupted."
+            );
+        }
+    }
+
+    private SlackMessageResult retryPostTicketToSlack(
+        ConnectwiseTicketResponse ticket,
+        String channelId,
+        String eventTimestamp,
+        String botToken
+    ) {
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "channel", channelId,
+                "text", buildSlackMessageText(ticket, eventTimestamp)
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.postMessage"))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message post failed after token refresh with HTTP "
+                        + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Object okValue = body.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message post failed after token refresh. Body: " + response.body()
+                );
+            }
+
+            SlackMessageResult result = new SlackMessageResult();
+            result.channelId = body.get("channel") instanceof String postedChannelId ? postedChannelId : channelId;
+            result.messageTs = body.get("ts") instanceof String ts ? ts : null;
+            return result;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message post failed after token refresh: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message post interrupted after token refresh."
+            );
+        }
+    }
+
+    private String buildSlackMessageText(ConnectwiseTicketResponse ticket, String eventTimestamp) {
+        return "*"
+            + valueOrFallback(ticket.getSummary(), "ConnectWise ticket")
+            + "*\n"
+            + "Ticket ID: " + valueOrFallback(ticket.getId() != null ? String.valueOf(ticket.getId()) : null, "Unknown")
+            + "\n"
+            + "Company: " + valueOrFallback(ticket.getCompany() != null ? ticket.getCompany().getIdentifier() : null, "Unknown company")
+            + "\n"
+            + "Board: " + valueOrFallback(ticket.getBoard() != null ? ticket.getBoard().getName() : null, "Unassigned")
+            + "\n"
+            + "Status: " + valueOrFallback(ticket.getStatus() != null ? ticket.getStatus().getName() : null, "Unknown")
+            + "\n"
+            + "Contact: " + valueOrFallback(ticket.getContact() != null ? ticket.getContact().getName() : null, "Unknown contact")
+            + "\n"
+            + "Assignee: " + valueOrFallback(ticket.getOwner() != null ? ticket.getOwner().getIdentifier() : null, "Unassigned")
+            + "\n"
+            + "Received: " + eventTimestamp;
+    }
+
+    private String getValidSlackBotToken(String tenantId, SlackSecretRequest secret) {
+        if (!StringUtils.hasText(secret.getBotToken())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Slack bot token not found.");
+        }
+
+        if (secret.getTokenExpiresAt() == null) {
+            return secret.getBotToken().trim();
+        }
+
+        long now = Instant.now().toEpochMilli();
+        long timeUntilExpiry = secret.getTokenExpiresAt() - now;
+        if (timeUntilExpiry > SLACK_TOKEN_REFRESH_BUFFER_MS) {
+            return secret.getBotToken().trim();
+        }
+
+        return refreshSlackBotToken(tenantId, secret);
+    }
+
+    private String refreshSlackBotToken(String tenantId, SlackSecretRequest secret) {
+        if (!StringUtils.hasText(secret.getRefreshToken())) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token expired and no refresh token is available."
+            );
+        }
+
+        if (!StringUtils.hasText(slackClientId) || !StringUtils.hasText(slackClientSecret)) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token expired and Slack client credentials are not configured on the API service."
+            );
+        }
+
+        try {
+            String authHeader = Base64.getEncoder()
+                .encodeToString((slackClientId.trim() + ":" + slackClientSecret.trim()).getBytes(StandardCharsets.UTF_8));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/oauth.v2.access"))
+                .header("Authorization", "Basic " + authHeader)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                    "grant_type=refresh_token&refresh_token="
+                        + URLEncoder.encode(secret.getRefreshToken().trim(), StandardCharsets.UTF_8)
+                ))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack token refresh failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> payload = objectMapper.readValue(
+                response.body(),
+                new TypeReference<Map<String, Object>>() {}
+            );
+            Object okValue = payload.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack token refresh failed. Body: " + response.body()
+                );
+            }
+
+            Object accessToken = payload.get("access_token");
+            if (!(accessToken instanceof String nextBotToken) || !StringUtils.hasText(nextBotToken)) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack token refresh did not return a bot token."
+                );
+            }
+
+            Object refreshToken = payload.get("refresh_token");
+            Object expiresIn = payload.get("expires_in");
+
+            secret.setBotToken(nextBotToken.trim());
+            secret.setRefreshToken(refreshToken instanceof String nextRefreshToken && StringUtils.hasText(nextRefreshToken)
+                ? nextRefreshToken.trim()
+                : secret.getRefreshToken());
+            if (expiresIn instanceof Number nextExpiresIn) {
+                secret.setTokenExpiresAt(Instant.now().plusSeconds(nextExpiresIn.longValue()).toEpochMilli());
+            }
+            awsService.saveSlackSecret(secret);
+            return secret.getBotToken();
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token refresh failed: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token refresh interrupted."
+            );
+        }
     }
 
     private String valueOrFallback(String value, String fallback) {

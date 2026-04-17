@@ -550,7 +550,6 @@ export default function OnboardingPage() {
 
       setConnectwiseSaved(true);
     } catch (error) {
-      setConnectwiseSaved(false);
       setConnectwiseError(
         error instanceof Error
           ? error.message

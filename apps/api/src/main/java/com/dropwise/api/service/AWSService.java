@@ -488,6 +488,27 @@ public class AWSService {
             .build());
     }
 
+    public Optional<String> loadConnectwiseWebhookId(String tenantId) {
+        Map<String, AttributeValue> item = dynamoDbClient.getItem(GetItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(tenantPartitionKey(tenantId)),
+                "sk", stringAttribute("CONNECTWISE_WEBHOOK")
+            ))
+            .build()).item();
+
+        if (item == null || item.isEmpty()) {
+            return Optional.empty();
+        }
+
+        String callbackUrl = stringValue(item, "callbackUrl");
+        if (!StringUtils.hasText(callbackUrl)) {
+            return Optional.empty();
+        }
+
+        return Optional.ofNullable(stringValue(item, "webhookId"));
+    }
+
     /**
      * Writes the given payload as a secret to AWS Secrets Manager under the specified secret name.
      * If the secret already exists, it updates the secret value; otherwise, it creates a new secret.
