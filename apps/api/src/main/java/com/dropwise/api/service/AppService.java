@@ -7,6 +7,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
 import com.dropwise.api.model.ConnectwiseSecretRequest;
+import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.SaveSecretResponse;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TenantConfigRequest;
@@ -18,6 +19,7 @@ public class AppService {
 
     private static final char[] TENANT_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ".toCharArray();
     private static final int TENANT_ID_RANDOM_LENGTH = 16;
+    private static final int MAX_ACTIVITY_LIMIT = 100;
 
     // Dependency on AWSService to handle secret storage operations
     private final AWSService awsService;
@@ -116,6 +118,11 @@ public class AppService {
         String normalizedTenantId = trim(tenantId);
         return awsService.loadTenantConfig(normalizedTenantId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant config not found."));
+    }
+
+    public java.util.List<ActivityEvent> listActivity(String tenantId, int limit) {
+        int normalizedLimit = Math.min(Math.max(limit, 1), MAX_ACTIVITY_LIMIT);
+        return awsService.listActivityEvents(trim(tenantId), normalizedLimit);
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.dropwise.api.controller;
 
 import java.util.Map;
+import java.util.List;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.dropwise.api.model.ConnectwiseSecretRequest;
+import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.SaveSecretResponse;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TenantConfigRequest;
@@ -65,6 +67,12 @@ public class AppController {
     @GetMapping("/tenant-config/{tenantId}")
     public TenantConfigResponse loadTenantConfig(@PathVariable String tenantId) {
         return appService.loadTenantConfig(tenantId);
+    }
+
+    @GetMapping("/activity/{tenantId}")
+    public List<ActivityEvent> listActivity(@PathVariable String tenantId, @org.springframework.web.bind.annotation.RequestParam(value = "limit", defaultValue = "25") int limit
+    ) {
+        return appService.listActivity(tenantId, limit);
     }
 
     /**

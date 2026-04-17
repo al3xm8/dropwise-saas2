@@ -1,29 +1,39 @@
 package com.dropwise.api.service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.ConnectwiseSecretRequest;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TenantConfigRequest;
 import com.dropwise.api.model.TenantConfigResponse;
+import com.dropwise.api.model.TicketSnapshot;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
+import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.CreateSecretRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.PutSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.ResourceNotFoundException;
 
@@ -98,6 +108,9 @@ public class AWSService {
         String now = Instant.now().toString();
         Optional<TenantConfigResponse> existingConfig = loadTenantConfig(request.getTenantId());
         String createdAt = existingConfig.map(TenantConfigResponse::getCreatedAt).orElse(now);
+        String previousConnectwiseCompanyId = existingConfig
+            .map(TenantConfigResponse::getConnectwiseCompanyId)
+            .orElse(null);
 
         Map<String, AttributeValue> item = new LinkedHashMap<>();
         item.put("pk", stringAttribute(tenantPartitionKey(request.getTenantId())));
@@ -119,6 +132,13 @@ public class AWSService {
             .tableName(dynamoDbTable)
             .item(item)
             .build());
+
+        syncConnectwiseLookup(
+            request.getTenantId(),
+            previousConnectwiseCompanyId,
+            request.getConnectwiseCompanyId(),
+            now
+        );
 
         return fromTenantConfigItem(item);
     }
@@ -143,6 +163,154 @@ public class AWSService {
         }
 
         return Optional.of(fromTenantConfigItem(item));
+    }
+
+    public Optional<String> resolveTenantIdByConnectwiseCompanyId(String connectwiseCompanyId) {
+        if (!StringUtils.hasText(connectwiseCompanyId)) {
+            return Optional.empty();
+        }
+
+        Map<String, AttributeValue> item = dynamoDbClient.getItem(GetItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(connectwiseLookupPartitionKey(connectwiseCompanyId)),
+                "sk", stringAttribute("LOOKUP")
+            ))
+            .build()).item();
+
+        if (item == null || item.isEmpty()) {
+            return Optional.empty();
+        }
+
+        return Optional.ofNullable(stringValue(item, "tenantId"));
+    }
+
+    public Optional<ConnectwiseService.ConnectwiseCredentials> loadConnectwiseCredentials(String tenantId) {
+        Optional<TenantConfigResponse> tenantConfig = loadTenantConfig(tenantId);
+        if (tenantConfig.isEmpty()) {
+            return Optional.empty();
+        }
+
+        String secretName = secretName(tenantId, "connectwise");
+        try {
+            String secretJson = secretsManagerClient.getSecretValue(GetSecretValueRequest.builder()
+                .secretId(secretName)
+                .build()).secretString();
+
+            Map<String, String> payload = objectMapper.readValue(
+                secretJson,
+                new TypeReference<Map<String, String>>() {}
+            );
+
+            ConnectwiseService.ConnectwiseCredentials credentials = new ConnectwiseService.ConnectwiseCredentials();
+            credentials.setConnectwiseCompanyId(tenantConfig.get().getConnectwiseCompanyId());
+            credentials.setConnectwiseSite(tenantConfig.get().getConnectwiseSite());
+            credentials.setClientId(payload.get("clientId"));
+            credentials.setPublicKey(payload.get("publicKey"));
+            credentials.setPrivateKey(payload.get("privateKey"));
+            return Optional.of(credentials);
+        } catch (ResourceNotFoundException | JsonProcessingException exception) {
+            return Optional.empty();
+        }
+    }
+
+    public TicketSnapshot saveTicketSnapshot(TicketSnapshot snapshot) {
+        String now = Instant.now().toString();
+        Optional<TicketSnapshot> existingSnapshot = loadTicketSnapshot(
+            snapshot.getTenantId(),
+            snapshot.getTicketId()
+        );
+        String createdAt = existingSnapshot.map(TicketSnapshot::getCreatedAt).orElse(now);
+
+        Map<String, AttributeValue> item = new LinkedHashMap<>();
+        item.put("pk", stringAttribute(tenantPartitionKey(snapshot.getTenantId())));
+        item.put("sk", stringAttribute(ticketSortKey(snapshot.getTicketId())));
+        item.put("itemType", stringAttribute("TICKET"));
+        item.put("tenantId", stringAttribute(snapshot.getTenantId()));
+        item.put("ticketId", stringAttribute(snapshot.getTicketId()));
+        item.put("sourceSystem", stringAttribute(snapshot.getSourceSystem()));
+        item.put("createdAt", stringAttribute(createdAt));
+        item.put("updatedAt", stringAttribute(now));
+        putIfPresent(item, "summary", snapshot.getSummary());
+        putIfPresent(item, "company", snapshot.getCompany());
+        putIfPresent(item, "board", snapshot.getBoard());
+        putIfPresent(item, "ticketStatus", snapshot.getTicketStatus());
+        putIfPresent(item, "contact", snapshot.getContact());
+        putIfPresent(item, "assignee", snapshot.getAssignee());
+        putIfPresent(item, "lastEventStatus", snapshot.getLastEventStatus());
+        putIfPresent(item, "lastEventAt", snapshot.getLastEventAt());
+        putIfPresent(item, "lastDestinationLabel", snapshot.getLastDestinationLabel());
+        putIfPresent(item, "lastRoutingRuleId", snapshot.getLastRoutingRuleId());
+
+        dynamoDbClient.putItem(PutItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .item(item)
+            .build());
+
+        snapshot.setCreatedAt(createdAt);
+        snapshot.setUpdatedAt(now);
+        return snapshot;
+    }
+
+    public ActivityEvent saveActivityEvent(ActivityEvent event) {
+        String now = Instant.now().toString();
+        if (!StringUtils.hasText(event.getEventId())) {
+            event.setEventId(UUID.randomUUID().toString());
+        }
+        if (!StringUtils.hasText(event.getCreatedAt())) {
+            event.setCreatedAt(now);
+        }
+
+        Map<String, AttributeValue> item = new LinkedHashMap<>();
+        item.put("pk", stringAttribute(tenantPartitionKey(event.getTenantId())));
+        item.put("sk", stringAttribute(eventSortKey(
+            event.getCreatedAt(),
+            event.getSourceTicketId(),
+            event.getEventId()
+        )));
+        item.put("itemType", stringAttribute("EVENT"));
+        item.put("tenantId", stringAttribute(event.getTenantId()));
+        item.put("eventId", stringAttribute(event.getEventId()));
+        item.put("createdAt", stringAttribute(event.getCreatedAt()));
+        putIfPresent(item, "sourceSystem", event.getSourceSystem());
+        putIfPresent(item, "sourceTicketId", event.getSourceTicketId());
+        putIfPresent(item, "status", event.getStatus());
+        putIfPresent(item, "title", event.getTitle());
+        putIfPresent(item, "description", event.getDescription());
+        putIfPresent(item, "ticketSummary", event.getTicketSummary());
+        putIfPresent(item, "board", event.getBoard());
+        putIfPresent(item, "ticketStatus", event.getTicketStatus());
+        putIfPresent(item, "company", event.getCompany());
+        putIfPresent(item, "contact", event.getContact());
+        putIfPresent(item, "assignee", event.getAssignee());
+        putIfPresent(item, "destinationLabel", event.getDestinationLabel());
+        putIfPresent(item, "routingRuleId", event.getRoutingRuleId());
+
+        dynamoDbClient.putItem(PutItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .item(item)
+            .build());
+
+        return event;
+    }
+
+    public List<ActivityEvent> listActivityEvents(String tenantId, int limit) {
+        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
+            .tableName(dynamoDbTable)
+            .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+            .expressionAttributeValues(Map.of(
+                ":pk", stringAttribute(tenantPartitionKey(tenantId)),
+                ":prefix", stringAttribute("EVENT#")
+            ))
+            .scanIndexForward(false)
+            .limit(Math.max(limit, 1))
+            .build());
+
+        List<ActivityEvent> events = new ArrayList<>();
+        for (Map<String, AttributeValue> item : response.items()) {
+            events.add(fromActivityEventItem(item));
+        }
+        return events;
     }
 
     /**
@@ -184,6 +352,18 @@ public class AWSService {
         return "TENANT#" + tenantId;
     }
 
+    private String connectwiseLookupPartitionKey(String connectwiseCompanyId) {
+        return "CW_COMPANY#" + connectwiseCompanyId;
+    }
+
+    private String ticketSortKey(String ticketId) {
+        return "TICKET#" + ticketId;
+    }
+
+    private String eventSortKey(String createdAt, String ticketId, String eventId) {
+        return "EVENT#" + createdAt + "#TICKET#" + ticketId + "#" + eventId;
+    }
+
     private AttributeValue stringAttribute(String value) {
         return AttributeValue.builder().s(value).build();
     }
@@ -195,6 +375,39 @@ public class AWSService {
     private void putIfPresent(Map<String, AttributeValue> item, String key, String value) {
         if (StringUtils.hasText(value)) {
             item.put(key, stringAttribute(value));
+        }
+    }
+
+    private void syncConnectwiseLookup(
+        String tenantId,
+        String previousConnectwiseCompanyId,
+        String nextConnectwiseCompanyId,
+        String now
+    ) {
+        if (StringUtils.hasText(previousConnectwiseCompanyId)
+            && !previousConnectwiseCompanyId.equals(nextConnectwiseCompanyId)) {
+            dynamoDbClient.deleteItem(DeleteItemRequest.builder()
+                .tableName(dynamoDbTable)
+                .key(Map.of(
+                    "pk", stringAttribute(connectwiseLookupPartitionKey(previousConnectwiseCompanyId)),
+                    "sk", stringAttribute("LOOKUP")
+                ))
+                .build());
+        }
+
+        if (StringUtils.hasText(nextConnectwiseCompanyId)) {
+            Map<String, AttributeValue> lookupItem = new LinkedHashMap<>();
+            lookupItem.put("pk", stringAttribute(connectwiseLookupPartitionKey(nextConnectwiseCompanyId)));
+            lookupItem.put("sk", stringAttribute("LOOKUP"));
+            lookupItem.put("itemType", stringAttribute("CONNECTWISE_COMPANY_LOOKUP"));
+            lookupItem.put("tenantId", stringAttribute(tenantId));
+            lookupItem.put("connectwiseCompanyId", stringAttribute(nextConnectwiseCompanyId));
+            lookupItem.put("updatedAt", stringAttribute(now));
+
+            dynamoDbClient.putItem(PutItemRequest.builder()
+                .tableName(dynamoDbTable)
+                .item(lookupItem)
+                .build());
         }
     }
 
@@ -217,6 +430,59 @@ public class AWSService {
         response.setOnboardingCompleted(booleanValue(item, "onboardingCompleted"));
         response.setCreatedAt(stringValue(item, "createdAt"));
         response.setUpdatedAt(stringValue(item, "updatedAt"));
+        return response;
+    }
+
+    private Optional<TicketSnapshot> loadTicketSnapshot(String tenantId, String ticketId) {
+        Map<String, AttributeValue> item = dynamoDbClient.getItem(GetItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(tenantPartitionKey(tenantId)),
+                "sk", stringAttribute(ticketSortKey(ticketId))
+            ))
+            .build()).item();
+
+        if (item == null || item.isEmpty()) {
+            return Optional.empty();
+        }
+
+        TicketSnapshot response = new TicketSnapshot();
+        response.setTenantId(stringValue(item, "tenantId"));
+        response.setTicketId(stringValue(item, "ticketId"));
+        response.setSourceSystem(stringValue(item, "sourceSystem"));
+        response.setSummary(stringValue(item, "summary"));
+        response.setCompany(stringValue(item, "company"));
+        response.setBoard(stringValue(item, "board"));
+        response.setTicketStatus(stringValue(item, "ticketStatus"));
+        response.setContact(stringValue(item, "contact"));
+        response.setAssignee(stringValue(item, "assignee"));
+        response.setLastEventStatus(stringValue(item, "lastEventStatus"));
+        response.setLastEventAt(stringValue(item, "lastEventAt"));
+        response.setLastDestinationLabel(stringValue(item, "lastDestinationLabel"));
+        response.setLastRoutingRuleId(stringValue(item, "lastRoutingRuleId"));
+        response.setCreatedAt(stringValue(item, "createdAt"));
+        response.setUpdatedAt(stringValue(item, "updatedAt"));
+        return Optional.of(response);
+    }
+
+    private ActivityEvent fromActivityEventItem(Map<String, AttributeValue> item) {
+        ActivityEvent response = new ActivityEvent();
+        response.setEventId(stringValue(item, "eventId"));
+        response.setTenantId(stringValue(item, "tenantId"));
+        response.setSourceSystem(stringValue(item, "sourceSystem"));
+        response.setSourceTicketId(stringValue(item, "sourceTicketId"));
+        response.setStatus(stringValue(item, "status"));
+        response.setTitle(stringValue(item, "title"));
+        response.setDescription(stringValue(item, "description"));
+        response.setTicketSummary(stringValue(item, "ticketSummary"));
+        response.setBoard(stringValue(item, "board"));
+        response.setTicketStatus(stringValue(item, "ticketStatus"));
+        response.setCompany(stringValue(item, "company"));
+        response.setContact(stringValue(item, "contact"));
+        response.setAssignee(stringValue(item, "assignee"));
+        response.setDestinationLabel(stringValue(item, "destinationLabel"));
+        response.setRoutingRuleId(stringValue(item, "routingRuleId"));
+        response.setCreatedAt(stringValue(item, "createdAt"));
         return response;
     }
 

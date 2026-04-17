@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
-  feedEvents,
+  loadFeedEvents,
   feedStatusOptions,
   type FeedEvent,
   type FeedEventStatus,
@@ -56,17 +56,58 @@ function matchesSearch(event: FeedEvent, search: string) {
 export default function FeedPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | FeedEventStatus>("all");
+  const [events, setEvents] = useState<FeedEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const storedTenantId = window.localStorage.getItem("dropwiseTenantId");
+    if (!storedTenantId) {
+      setError("No tenant is available yet for this workspace.");
+      setLoading(false);
+      return;
+    }
+    const tenantId = storedTenantId;
+
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const nextEvents = await loadFeedEvents(tenantId, 50);
+        if (!cancelled) {
+          setEvents(nextEvents);
+          setError(null);
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          setError(
+            caught instanceof Error ? caught.message : "Failed to load feed activity.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void refresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredEvents = useMemo(() => {
     const search = query.trim().toLowerCase();
 
-    return feedEvents.filter((event) => {
+    return events.filter((event) => {
       const matchesStatus =
         statusFilter === "all" ? true : event.status === statusFilter;
 
       return matchesStatus && matchesSearch(event, search);
     });
-  }, [query, statusFilter]);
+  }, [events, query, statusFilter]);
 
   return (
     <div className="space-y-6">
@@ -95,7 +136,23 @@ export default function FeedPage() {
       </section>
 
       <section className="space-y-4">
-        {filteredEvents.length === 0 ? (
+        {loading ? (
+          <div className="rounded-lg border border-slate-200/70 bg-white/88 px-6 py-16 text-center shadow-[0_18px_36px_rgba(15,23,42,0.05)]">
+            <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-slate-950">
+              Loading activity
+            </h2>
+            <p className="mt-2 text-[0.92rem] text-slate-600">
+              Pulling the latest ConnectWise events into the feed.
+            </p>
+          </div>
+        ) : error ? (
+          <div className="rounded-lg border border-rose-200/70 bg-rose-50/85 px-6 py-10 text-center shadow-[0_18px_36px_rgba(15,23,42,0.05)]">
+            <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-rose-700">
+              Feed unavailable
+            </h2>
+            <p className="mt-2 text-[0.92rem] text-rose-700/80">{error}</p>
+          </div>
+        ) : filteredEvents.length === 0 ? (
           <div className="rounded-lg border border-slate-200/70 bg-white/88 px-6 py-16 text-center shadow-[0_18px_36px_rgba(15,23,42,0.05)]">
             <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-slate-950">
               No activity matches the current filter
