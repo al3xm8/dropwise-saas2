@@ -8,6 +8,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -31,6 +32,9 @@ public class ConnectwiseService {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectwiseService.class);
     private static final String CALLBACK_DESCRIPTION = "Dropwise ticket callback";
+    private static final int CALLBACK_OBJECT_ID = 1;
+    private static final String CALLBACK_TYPE = "Ticket";
+    private static final String CALLBACK_LEVEL = "Board";
 
     public static class ConnectwiseCredentials {
         private String connectwiseCompanyId;
@@ -78,6 +82,16 @@ public class ConnectwiseService {
         public void setPrivateKey(String privateKey) {
             this.privateKey = privateKey;
         }
+    }
+
+    private static class CallbackEntry {
+        private String id;
+        private String url;
+        private String description;
+        private Integer objectId;
+        private String type;
+        private String level;
+        private Boolean inactiveFlag;
     }
 
     private final AWSService awsService;
@@ -172,46 +186,74 @@ public class ConnectwiseService {
         }
 
         String callbackUrl = buildCallbackUrl();
-        String payload = objectMapper.writeValueAsString(Map.of(
-            "description", CALLBACK_DESCRIPTION,
-            "url", callbackUrl,
-            "objectId", 1,
-            "type", "Ticket",
-            "level", "Board",
-            "inactiveFlag", false
-        ));
-
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(buildBaseUrl(credentials.get().getConnectwiseSite()) + "/system/callbacks/"))
-            .header("Authorization", buildAuthHeader(credentials.get()))
-            .header("clientId", credentials.get().getClientId())
-            .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(payload))
-            .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        int statusCode = response.statusCode();
-        if (statusCode < 200 || statusCode >= 300) {
-            throw new IOException("ConnectWise webhook registration failed with HTTP "
-                + statusCode + ". Body: " + safeBodySnippet(response.body()));
-        }
-
-        JsonNode body = objectMapper.readTree(response.body());
-        String webhookId = extractWebhookId(body);
+        String webhookId = createOrReconcileCallback(credentials.get(), callbackUrl);
         awsService.saveConnectwiseWebhook(tenantId, webhookId, callbackUrl, CALLBACK_DESCRIPTION);
         return new ConnectwiseWebhookRegistrationResponse(true, webhookId, "ConnectWise webhook registered.");
     }
 
-    public ConnectwiseTicketResponse fetchTicketById(String tenantId, String ticketId, ConnectwiseCredentials credentials) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(buildBaseUrl(credentials.getConnectwiseSite()) + "/service/tickets/" + ticketId))
-            .header("Authorization", buildAuthHeader(credentials))
-            .header("clientId", credentials.getClientId())
-            .header("Content-Type", "application/json")
-            .GET()
-            .build();
+    private String createOrReconcileCallback(ConnectwiseCredentials credentials, String callbackUrl)
+        throws IOException, InterruptedException {
+        String payload = objectMapper.writeValueAsString(Map.of(
+            "description", CALLBACK_DESCRIPTION,
+            "url", callbackUrl,
+            "objectId", CALLBACK_OBJECT_ID,
+            "type", CALLBACK_TYPE,
+            "level", CALLBACK_LEVEL,
+            "inactiveFlag", false
+        ));
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = sendRequest(
+            credentials,
+            "/system/callbacks/",
+            "POST",
+            payload
+        );
+
+        int statusCode = response.statusCode();
+        if (statusCode >= 200 && statusCode < 300) {
+            JsonNode body = objectMapper.readTree(response.body());
+            return extractWebhookId(body);
+        }
+
+        String responseBody = response.body();
+        if (statusCode == 400 && responseBody != null && responseBody.contains("ObjectExists")) {
+            CallbackEntry existing = findMatchingCallback(credentials);
+            if (existing == null) {
+                throw new IOException("ConnectWise callback already exists, but the existing callback could not be found.");
+            }
+
+            if (callbackUrl.equals(trim(existing.url)) && !Boolean.TRUE.equals(existing.inactiveFlag)) {
+                return existing.id;
+            }
+
+            deleteCallback(credentials, existing.id);
+            HttpResponse<String> recreated = sendRequest(
+                credentials,
+                "/system/callbacks/",
+                "POST",
+                payload
+            );
+
+            if (recreated.statusCode() < 200 || recreated.statusCode() >= 300) {
+                throw new IOException("ConnectWise webhook re-registration failed with HTTP "
+                    + recreated.statusCode() + ". Body: " + safeBodySnippet(recreated.body()));
+            }
+
+            JsonNode recreatedBody = objectMapper.readTree(recreated.body());
+            return extractWebhookId(recreatedBody);
+        }
+
+        throw new IOException("ConnectWise webhook registration failed with HTTP "
+            + statusCode + ". Body: " + safeBodySnippet(responseBody));
+    }
+
+    public ConnectwiseTicketResponse fetchTicketById(String tenantId, String ticketId, ConnectwiseCredentials credentials) throws IOException, InterruptedException {
+        HttpResponse<String> response = sendRequest(
+            credentials,
+            "/service/tickets/" + ticketId,
+            "GET",
+            null
+        );
         int statusCode = response.statusCode();
         if (statusCode < 200 || statusCode >= 300) {
             throw new IOException("ConnectWise ticket fetch failed with HTTP " + statusCode);
@@ -269,7 +311,15 @@ public class ConnectwiseService {
     }
 
     private String buildCallbackUrl() {
-        return publicApiBaseUrl.replaceAll("/+$", "") + "/api/connectwise/events?recordId=";
+        String normalized = trim(publicApiBaseUrl);
+        if (!StringUtils.hasText(normalized) || normalized.contains("localhost")) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "APP_PUBLIC_API_BASE_URL must be configured before registering ConnectWise webhooks."
+            );
+        }
+
+        return normalized.replaceAll("/+$", "") + "/api/connectwise/events?recordId=";
     }
 
     private String buildAuthHeader(ConnectwiseCredentials credentials) {
@@ -346,6 +396,10 @@ public class ConnectwiseService {
         return value == null ? null : String.valueOf(value).trim();
     }
 
+    private String trim(String value) {
+        return value == null ? null : value.trim();
+    }
+
     private String extractWebhookId(JsonNode body) {
         if (body == null || body.isNull()) {
             return null;
@@ -357,6 +411,75 @@ public class ConnectwiseService {
             return body.get("callbackId").asText();
         }
         return null;
+    }
+
+    private CallbackEntry findMatchingCallback(ConnectwiseCredentials credentials) throws IOException, InterruptedException {
+        HttpResponse<String> response = sendRequest(credentials, "/system/callbacks", "GET", null);
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("ConnectWise callback lookup failed with HTTP "
+                + response.statusCode() + ". Body: " + safeBodySnippet(response.body()));
+        }
+
+        JsonNode body = objectMapper.readTree(response.body());
+        if (!body.isArray()) {
+            return null;
+        }
+
+        for (JsonNode node : body) {
+            String type = node.path("type").asText(null);
+            String level = node.path("level").asText(null);
+            int objectId = node.path("objectId").asInt(Integer.MIN_VALUE);
+            if (CALLBACK_TYPE.equalsIgnoreCase(type)
+                && CALLBACK_LEVEL.equalsIgnoreCase(level)
+                && objectId == CALLBACK_OBJECT_ID) {
+                CallbackEntry entry = new CallbackEntry();
+                entry.id = node.path("id").isMissingNode() ? null : node.path("id").asText(null);
+                entry.url = node.path("url").asText(null);
+                entry.description = node.path("description").asText(null);
+                entry.objectId = objectId;
+                entry.type = type;
+                entry.level = level;
+                entry.inactiveFlag = node.has("inactiveFlag") ? node.path("inactiveFlag").asBoolean() : null;
+                return entry;
+            }
+        }
+
+        return null;
+    }
+
+    private void deleteCallback(ConnectwiseCredentials credentials, String callbackId) throws IOException, InterruptedException {
+        if (!StringUtils.hasText(callbackId)) {
+            throw new IOException("Cannot delete existing ConnectWise callback without an id.");
+        }
+
+        HttpResponse<String> response = sendRequest(credentials, "/system/callbacks/" + callbackId, "DELETE", null);
+        int statusCode = response.statusCode();
+        if (statusCode != 204 && (statusCode < 200 || statusCode >= 300)) {
+            throw new IOException("ConnectWise callback delete failed with HTTP "
+                + statusCode + ". Body: " + safeBodySnippet(response.body()));
+        }
+    }
+
+    private HttpResponse<String> sendRequest(
+        ConnectwiseCredentials credentials,
+        String path,
+        String method,
+        String body
+    ) throws IOException, InterruptedException {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+            .uri(URI.create(buildBaseUrl(credentials.getConnectwiseSite()) + path))
+            .header("Authorization", buildAuthHeader(credentials))
+            .header("clientId", credentials.getClientId())
+            .header("Content-Type", "application/json");
+
+        switch (method) {
+            case "GET" -> builder.GET();
+            case "POST" -> builder.POST(HttpRequest.BodyPublishers.ofString(body != null ? body : ""));
+            case "DELETE" -> builder.DELETE();
+            default -> throw new IllegalArgumentException("Unsupported ConnectWise HTTP method: " + method);
+        }
+
+        return httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private static String safeBodySnippet(String body) {
