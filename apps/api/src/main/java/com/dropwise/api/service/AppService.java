@@ -6,10 +6,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -35,6 +37,7 @@ public class AppService {
     private static final char[] TENANT_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ".toCharArray();
     private static final int TENANT_ID_RANDOM_LENGTH = 16;
     private static final int MAX_ACTIVITY_LIMIT = 500;
+    private static final long SLACK_TOKEN_REFRESH_BUFFER_MS = 300_000L;
 
     // Dependency on AWSService to handle secret storage operations
     private final AWSService awsService;
@@ -42,15 +45,24 @@ public class AppService {
     private final SecureRandom secureRandom = new SecureRandom();
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final String slackClientId;
+    private final String slackClientSecret;
 
     /**
      * Constructs an instance of AppService with the provided AWSService dependency.
      * 
      * @param awsService
      */
-    public AppService(AWSService awsService, ConnectwiseService connectwiseService) {
+    public AppService(
+        AWSService awsService,
+        ConnectwiseService connectwiseService,
+        @Value("${slack.client.id:}") String slackClientId,
+        @Value("${slack.client.secret:}") String slackClientSecret
+    ) {
         this.awsService = awsService;
         this.connectwiseService = connectwiseService;
+        this.slackClientId = slackClientId;
+        this.slackClientSecret = slackClientSecret;
     }
 
     /**
@@ -229,70 +241,11 @@ public class AppService {
 
     public List<SlackChannelSummary> listSlackChannels(String tenantId) {
         String normalizedTenantId = trim(tenantId);
-        String botToken = awsService.loadSlackBotToken(normalizedTenantId)
+        SlackSecretRequest secret = awsService.loadSlackSecret(normalizedTenantId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Slack bot token not found."));
 
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create("https://slack.com/api/conversations.list?exclude_archived=true&limit=1000&types=public_channel,private_channel"))
-            .header("Authorization", "Bearer " + botToken)
-            .header("Content-Type", "application/json; charset=utf-8")
-            .GET()
-            .build();
-
-        try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Slack channel lookup failed with HTTP " + response.statusCode() + ". Body: " + response.body()
-                );
-            }
-
-            Map<String, Object> payload = objectMapper.readValue(
-                response.body(),
-                new TypeReference<Map<String, Object>>() {}
-            );
-
-            Object okValue = payload.get("ok");
-            if (!(okValue instanceof Boolean) || !((Boolean) okValue)) {
-                throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "Slack channel lookup failed. Body: " + response.body()
-                );
-            }
-
-            List<SlackChannelSummary> channels = new ArrayList<>();
-            Object channelsValue = payload.get("channels");
-            if (channelsValue instanceof List<?> channelList) {
-                for (Object item : channelList) {
-                    if (!(item instanceof Map<?, ?> rawChannel)) {
-                        continue;
-                    }
-
-                    Object id = rawChannel.get("id");
-                    Object name = rawChannel.get("name");
-                    if (id instanceof String channelId && name instanceof String channelName) {
-                        SlackChannelSummary channel = new SlackChannelSummary();
-                        channel.setId(channelId);
-                        channel.setName(channelName);
-                        channels.add(channel);
-                    }
-                }
-            }
-
-            return channels;
-        } catch (IOException exception) {
-            throw new ResponseStatusException(
-                HttpStatus.BAD_GATEWAY,
-                "Slack channel lookup failed: " + exception.getMessage()
-            );
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            throw new ResponseStatusException(
-                HttpStatus.BAD_GATEWAY,
-                "Slack channel lookup interrupted."
-            );
-        }
+        String botToken = getValidSlackBotToken(normalizedTenantId, secret);
+        return fetchSlackChannels(normalizedTenantId, botToken, true);
     }
 
     /**
@@ -396,6 +349,183 @@ public class AppService {
         }
         if (!StringUtils.hasText(rule.getAction().getTargetChannelId())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Slack destination is required.");
+        }
+    }
+
+    private String getValidSlackBotToken(String tenantId, SlackSecretRequest secret) {
+        if (!StringUtils.hasText(secret.getBotToken())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Slack bot token not found.");
+        }
+
+        if (secret.getTokenExpiresAt() == null) {
+            return secret.getBotToken().trim();
+        }
+
+        long now = Instant.now().toEpochMilli();
+        long timeUntilExpiry = secret.getTokenExpiresAt() - now;
+        if (timeUntilExpiry > SLACK_TOKEN_REFRESH_BUFFER_MS) {
+            return secret.getBotToken().trim();
+        }
+
+        return refreshSlackBotToken(tenantId, secret);
+    }
+
+    private String refreshSlackBotToken(String tenantId, SlackSecretRequest secret) {
+        if (!StringUtils.hasText(secret.getRefreshToken())) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token expired and no refresh token is available."
+            );
+        }
+
+        if (!StringUtils.hasText(slackClientId) || !StringUtils.hasText(slackClientSecret)) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token expired and Slack client credentials are not configured on the API service."
+            );
+        }
+
+        try {
+            String authHeader = java.util.Base64.getEncoder()
+                .encodeToString((slackClientId.trim() + ":" + slackClientSecret.trim()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/oauth.v2.access"))
+                .header("Authorization", "Basic " + authHeader)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                    "grant_type=refresh_token&refresh_token=" + java.net.URLEncoder.encode(secret.getRefreshToken().trim(), java.nio.charset.StandardCharsets.UTF_8)
+                ))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack token refresh failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> payload = objectMapper.readValue(
+                response.body(),
+                new TypeReference<Map<String, Object>>() {}
+            );
+            Object okValue = payload.get("ok");
+            if (!(okValue instanceof Boolean) || !((Boolean) okValue)) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack token refresh failed. Body: " + response.body()
+                );
+            }
+
+            Object accessToken = payload.get("access_token");
+            if (!(accessToken instanceof String nextBotToken) || !StringUtils.hasText(nextBotToken)) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack token refresh did not return a bot token."
+                );
+            }
+
+            Object refreshToken = payload.get("refresh_token");
+            Object expiresIn = payload.get("expires_in");
+
+            secret.setBotToken(nextBotToken.trim());
+            secret.setRefreshToken(refreshToken instanceof String nextRefreshToken && StringUtils.hasText(nextRefreshToken)
+                ? nextRefreshToken.trim()
+                : secret.getRefreshToken());
+            if (expiresIn instanceof Number nextExpiresIn) {
+                secret.setTokenExpiresAt(Instant.now().plusSeconds(nextExpiresIn.longValue()).toEpochMilli());
+            }
+            awsService.saveSlackSecret(secret);
+            return secret.getBotToken();
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token refresh failed: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack token refresh interrupted."
+            );
+        }
+    }
+
+    private List<SlackChannelSummary> fetchSlackChannels(
+        String tenantId,
+        String botToken,
+        boolean allowRefreshRetry
+    ) {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create("https://slack.com/api/conversations.list?exclude_archived=true&limit=1000&types=public_channel,private_channel"))
+            .header("Authorization", "Bearer " + botToken)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .GET()
+            .build();
+
+        try {
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack channel lookup failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> payload = objectMapper.readValue(
+                response.body(),
+                new TypeReference<Map<String, Object>>() {}
+            );
+
+            Object okValue = payload.get("ok");
+            if (!(okValue instanceof Boolean) || !((Boolean) okValue)) {
+                Object errorValue = payload.get("error");
+                String errorCode = errorValue instanceof String ? (String) errorValue : null;
+                if ("token_expired".equals(errorCode) && allowRefreshRetry) {
+                    SlackSecretRequest secret = awsService.loadSlackSecret(tenantId)
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Slack bot token not found."));
+                    String refreshedToken = refreshSlackBotToken(tenantId, secret);
+                    return fetchSlackChannels(tenantId, refreshedToken, false);
+                }
+
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack channel lookup failed. Body: " + response.body()
+                );
+            }
+
+            List<SlackChannelSummary> channels = new ArrayList<>();
+            Object channelsValue = payload.get("channels");
+            if (channelsValue instanceof List<?> channelList) {
+                for (Object item : channelList) {
+                    if (!(item instanceof Map<?, ?> rawChannel)) {
+                        continue;
+                    }
+
+                    Object id = rawChannel.get("id");
+                    Object name = rawChannel.get("name");
+                    if (id instanceof String channelId && name instanceof String channelName) {
+                        SlackChannelSummary channel = new SlackChannelSummary();
+                        channel.setId(channelId);
+                        channel.setName(channelName);
+                        channels.add(channel);
+                    }
+                }
+            }
+
+            return channels;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack channel lookup failed: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack channel lookup interrupted."
+            );
         }
     }
 }

@@ -418,6 +418,38 @@ public class AWSService {
         }
     }
 
+    public Optional<SlackSecretRequest> loadSlackSecret(String tenantId) {
+        String secretName = secretName(tenantId, "slack");
+        try {
+            String secretJson = secretsManagerClient.getSecretValue(GetSecretValueRequest.builder()
+                .secretId(secretName)
+                .build()).secretString();
+
+            Map<String, String> payload = objectMapper.readValue(
+                secretJson,
+                new TypeReference<Map<String, String>>() {}
+            );
+
+            SlackSecretRequest secret = new SlackSecretRequest();
+            secret.setTenantId(tenantId);
+            secret.setWorkspaceId(payload.get("workspaceId"));
+            secret.setBotToken(payload.get("botToken"));
+            secret.setRefreshToken(payload.get("refreshToken"));
+            String tokenExpiresAt = payload.get("tokenExpiresAt");
+            if (StringUtils.hasText(tokenExpiresAt)) {
+                try {
+                    secret.setTokenExpiresAt(Long.parseLong(tokenExpiresAt));
+                } catch (NumberFormatException exception) {
+                    secret.setTokenExpiresAt(null);
+                }
+            }
+
+            return Optional.of(secret);
+        } catch (ResourceNotFoundException | JsonProcessingException exception) {
+            return Optional.empty();
+        }
+    }
+
     public void saveConnectwiseWebhook(
         String tenantId,
         String webhookId,
