@@ -7,6 +7,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
 import com.dropwise.api.model.ConnectwiseSecretRequest;
+import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.SaveSecretResponse;
 import com.dropwise.api.model.SlackSecretRequest;
@@ -23,6 +24,7 @@ public class AppService {
 
     // Dependency on AWSService to handle secret storage operations
     private final AWSService awsService;
+    private final ConnectwiseService connectwiseService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     /**
@@ -30,8 +32,9 @@ public class AppService {
      * 
      * @param awsService
      */
-    public AppService(AWSService awsService) {
+    public AppService(AWSService awsService, ConnectwiseService connectwiseService) {
         this.awsService = awsService;
+        this.connectwiseService = connectwiseService;
     }
 
     /**
@@ -123,6 +126,12 @@ public class AppService {
     public java.util.List<ActivityEvent> listActivity(String tenantId, int limit) {
         int normalizedLimit = Math.min(Math.max(limit, 1), MAX_ACTIVITY_LIMIT);
         return awsService.listActivityEvents(trim(tenantId), normalizedLimit);
+    }
+
+    public ConnectwiseWebhookRegistrationResponse registerConnectwiseWebhook(
+        String tenantId
+    ) throws java.io.IOException, InterruptedException {
+        return connectwiseService.registerWebhook(trim(tenantId));
     }
 
     /**

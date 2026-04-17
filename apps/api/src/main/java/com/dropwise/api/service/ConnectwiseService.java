@@ -19,15 +19,18 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.dropwise.api.model.ActivityEvent;
+import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ConnectwiseTicketResponse;
 import com.dropwise.api.model.TicketSnapshot;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class ConnectwiseService {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectwiseService.class);
+    private static final String CALLBACK_DESCRIPTION = "Dropwise ticket callback";
 
     public static class ConnectwiseCredentials {
         private String connectwiseCompanyId;
@@ -80,11 +83,16 @@ public class ConnectwiseService {
     private final AWSService awsService;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final String publicApiBaseUrl;
 
-    public ConnectwiseService(AWSService awsService) {
+    public ConnectwiseService(
+        AWSService awsService,
+        @org.springframework.beans.factory.annotation.Value("${app.public-api-base-url:http://localhost:8080}") String publicApiBaseUrl
+    ) {
         this.awsService = awsService;
         this.objectMapper = new ObjectMapper();
         this.httpClient = HttpClient.newHttpClient();
+        this.publicApiBaseUrl = publicApiBaseUrl;
     }
 
     public String onNewEvent(String recordId, Map<String, Object> payload) throws IOException, InterruptedException {
@@ -153,6 +161,47 @@ public class ConnectwiseService {
         return "Processed ConnectWise " + action + " event for ticketId: " + ticketId;
     }
 
+    public ConnectwiseWebhookRegistrationResponse registerWebhook(String tenantId) throws IOException, InterruptedException {
+        if (!StringUtils.hasText(tenantId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing tenantId.");
+        }
+
+        Optional<ConnectwiseCredentials> credentials = awsService.loadConnectwiseCredentials(tenantId);
+        if (credentials.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ConnectWise credentials are incomplete for this tenant.");
+        }
+
+        String callbackUrl = buildCallbackUrl();
+        String payload = objectMapper.writeValueAsString(Map.of(
+            "description", CALLBACK_DESCRIPTION,
+            "url", callbackUrl,
+            "objectId", 1,
+            "type", "Ticket",
+            "level", "Board",
+            "inactiveFlag", false
+        ));
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(buildBaseUrl(credentials.get().getConnectwiseSite()) + "/system/callbacks/"))
+            .header("Authorization", buildAuthHeader(credentials.get()))
+            .header("clientId", credentials.get().getClientId())
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(payload))
+            .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        int statusCode = response.statusCode();
+        if (statusCode < 200 || statusCode >= 300) {
+            throw new IOException("ConnectWise webhook registration failed with HTTP "
+                + statusCode + ". Body: " + safeBodySnippet(response.body()));
+        }
+
+        JsonNode body = objectMapper.readTree(response.body());
+        String webhookId = extractWebhookId(body);
+        awsService.saveConnectwiseWebhook(tenantId, webhookId, callbackUrl, CALLBACK_DESCRIPTION);
+        return new ConnectwiseWebhookRegistrationResponse(true, webhookId, "ConnectWise webhook registered.");
+    }
+
     public ConnectwiseTicketResponse fetchTicketById(String tenantId, String ticketId, ConnectwiseCredentials credentials) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(buildBaseUrl(credentials.getConnectwiseSite()) + "/service/tickets/" + ticketId))
@@ -217,6 +266,10 @@ public class ConnectwiseService {
         }
 
         return "https://" + normalizedSite + "/v4_6_release/apis/3.0";
+    }
+
+    private String buildCallbackUrl() {
+        return publicApiBaseUrl.replaceAll("/+$", "") + "/api/connectwise/events?recordId=";
     }
 
     private String buildAuthHeader(ConnectwiseCredentials credentials) {
@@ -291,5 +344,26 @@ public class ConnectwiseService {
 
     private String stringValue(Object value) {
         return value == null ? null : String.valueOf(value).trim();
+    }
+
+    private String extractWebhookId(JsonNode body) {
+        if (body == null || body.isNull()) {
+            return null;
+        }
+        if (body.has("id") && !body.get("id").isNull()) {
+            return body.get("id").asText();
+        }
+        if (body.has("callbackId") && !body.get("callbackId").isNull()) {
+            return body.get("callbackId").asText();
+        }
+        return null;
+    }
+
+    private static String safeBodySnippet(String body) {
+        if (body == null) {
+            return "<empty>";
+        }
+        String compact = body.replaceAll("\\s+", " ").trim();
+        return compact.length() <= 300 ? compact : compact.substring(0, 300) + "...";
     }
 }

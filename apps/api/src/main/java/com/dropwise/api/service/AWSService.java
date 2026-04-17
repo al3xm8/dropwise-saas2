@@ -313,6 +313,44 @@ public class AWSService {
         return events;
     }
 
+    public void saveConnectwiseWebhook(
+        String tenantId,
+        String webhookId,
+        String callbackUrl,
+        String description
+    ) {
+        String now = Instant.now().toString();
+        Map<String, AttributeValue> item = new LinkedHashMap<>();
+        item.put("pk", stringAttribute(tenantPartitionKey(tenantId)));
+        item.put("sk", stringAttribute("CONNECTWISE_WEBHOOK"));
+        item.put("itemType", stringAttribute("CONNECTWISE_WEBHOOK"));
+        item.put("tenantId", stringAttribute(tenantId));
+        item.put("callbackUrl", stringAttribute(callbackUrl));
+        item.put("objectId", stringAttribute("1"));
+        item.put("type", stringAttribute("Ticket"));
+        item.put("level", stringAttribute("Board"));
+        item.put("inactiveFlag", booleanAttribute(false));
+        item.put("updatedAt", stringAttribute(now));
+        putIfPresent(item, "webhookId", webhookId);
+        putIfPresent(item, "description", description);
+
+        Map<String, AttributeValue> existing = dynamoDbClient.getItem(GetItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(tenantPartitionKey(tenantId)),
+                "sk", stringAttribute("CONNECTWISE_WEBHOOK")
+            ))
+            .build()).item();
+
+        String createdAt = stringValue(existing, "createdAt");
+        item.put("createdAt", stringAttribute(StringUtils.hasText(createdAt) ? createdAt : now));
+
+        dynamoDbClient.putItem(PutItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .item(item)
+            .build());
+    }
+
     /**
      * Writes the given payload as a secret to AWS Secrets Manager under the specified secret name.
      * If the secret already exists, it updates the secret value; otherwise, it creates a new secret.

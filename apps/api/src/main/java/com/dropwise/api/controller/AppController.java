@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.dropwise.api.model.ConnectwiseSecretRequest;
+import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.SaveSecretResponse;
 import com.dropwise.api.model.SlackSecretRequest;
@@ -98,6 +99,14 @@ public class AppController {
     @ResponseStatus(HttpStatus.CREATED)
     public SaveSecretResponse saveConnectwiseSecret(@RequestBody ConnectwiseSecretRequest request) {
         return appService.saveConnectwiseSecret(request);
+    }
+
+    @PostMapping("/connectwise/webhook")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ConnectwiseWebhookRegistrationResponse registerConnectwiseWebhook(
+        @RequestBody Map<String, String> request
+    ) throws java.io.IOException, InterruptedException {
+        return appService.registerConnectwiseWebhook(request.get("tenantId"));
     }
 
     /**

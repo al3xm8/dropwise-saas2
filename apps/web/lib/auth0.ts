@@ -4,7 +4,7 @@ const scope = process.env.AUTH0_SCOPE ?? "openid profile email";
 const audience = process.env.AUTH0_AUDIENCE;
 
 export const auth0 = new Auth0Client({
-  signInReturnToPath: "/onboarding",
+  signInReturnToPath: "/dashboard",
   authorizationParameters: {
     scope,
     ...(audience ? { audience } : {}),
