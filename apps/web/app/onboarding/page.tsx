@@ -40,6 +40,12 @@ type TenantConfigResponse = TenantConfigPayload & {
   updatedAt?: string;
 };
 
+type ConnectwiseWebhookRegistrationResponse = {
+  success?: boolean;
+  webhookId?: string;
+  message?: string;
+};
+
 const stages: Array<{ id: StageId; label: string; eyebrow: string }> = [
   { id: "welcome", label: "Welcome", eyebrow: "01" },
   { id: "systems", label: "Choose systems", eyebrow: "02" },
@@ -517,12 +523,33 @@ export default function OnboardingPage() {
       await saveTenantConfig({
         connectwiseSite,
         connectwiseCompanyId,
+        connectwiseConnected: false,
+      });
+
+      const webhookResponse = await fetch(`${apiBaseUrl}/api/app/connectwise/webhook`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tenantId,
+        }),
+      });
+
+      if (!webhookResponse.ok) {
+        const payload =
+          (await webhookResponse.json().catch(() => null)) as ConnectwiseWebhookRegistrationResponse | null;
+        throw new Error(payload?.message ?? "Failed to register ConnectWise webhook.");
+      }
+
+      await saveTenantConfig({
+        connectwiseSite,
+        connectwiseCompanyId,
         connectwiseConnected: true,
       });
 
       setConnectwiseSaved(true);
     } catch (error) {
-      setConnectwiseSaved(false);
       setConnectwiseError(
         error instanceof Error
           ? error.message

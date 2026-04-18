@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
-  feedEvents,
+  loadFeedEvents,
   feedStatusOptions,
   type FeedEvent,
   type FeedEventStatus,
@@ -53,20 +53,84 @@ function matchesSearch(event: FeedEvent, search: string) {
     .includes(search);
 }
 
+function eventTimestamp(value: string) {
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function groupEventsByTicket(events: FeedEvent[]) {
+  const grouped = new Map<string, FeedEvent>();
+
+  for (const event of events) {
+    const ticketKey = `${event.sourceSystem}:${event.sourceTicketId}`;
+    const existing = grouped.get(ticketKey);
+
+    if (!existing || eventTimestamp(event.createdAt) >= eventTimestamp(existing.createdAt)) {
+      grouped.set(ticketKey, event);
+    }
+  }
+
+  return [...grouped.values()].sort(
+    (left, right) => eventTimestamp(right.createdAt) - eventTimestamp(left.createdAt),
+  );
+}
+
 export default function FeedPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | FeedEventStatus>("all");
+  const [events, setEvents] = useState<FeedEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const storedTenantId = window.localStorage.getItem("dropwiseTenantId");
+    if (!storedTenantId) {
+      setError("No tenant is available yet for this workspace.");
+      setLoading(false);
+      return;
+    }
+    const tenantId = storedTenantId;
+
+    let cancelled = false;
+
+    async function refresh() {
+      try {
+        const nextEvents = await loadFeedEvents(tenantId, 50);
+        if (!cancelled) {
+          setEvents(nextEvents);
+          setError(null);
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          setError(
+            caught instanceof Error ? caught.message : "Failed to load feed activity.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void refresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredEvents = useMemo(() => {
     const search = query.trim().toLowerCase();
+    const groupedEvents = groupEventsByTicket(events);
 
-    return feedEvents.filter((event) => {
+    return groupedEvents.filter((event) => {
       const matchesStatus =
         statusFilter === "all" ? true : event.status === statusFilter;
 
       return matchesStatus && matchesSearch(event, search);
     });
-  }, [query, statusFilter]);
+  }, [events, query, statusFilter]);
 
   return (
     <div className="space-y-6">
@@ -76,7 +140,7 @@ export default function FeedPage() {
           placeholder="Search tickets, rules, companies, destinations, or boards"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          className="h-12 rounded-md border border-slate-200/80 bg-white/88 px-4 text-[0.92rem] text-slate-700 outline-none transition focus:border-[#93c5fd] focus:ring-4 focus:ring-[#dbeafe]"
+          className="h-12 rounded-md border border-slate-400/85 bg-white/92 px-4 text-[0.92rem] text-slate-700 outline-none transition focus:border-[#93c5fd] focus:ring-4 focus:ring-[#dbeafe]"
         />
 
         <select
@@ -84,7 +148,7 @@ export default function FeedPage() {
           onChange={(event) =>
             setStatusFilter(event.target.value as "all" | FeedEventStatus)
           }
-          className="h-12 rounded-md border border-slate-200/80 bg-white/88 px-4 text-[0.92rem] text-slate-700 outline-none transition focus:border-[#93c5fd] focus:ring-4 focus:ring-[#dbeafe]"
+          className="h-12 rounded-md border border-slate-400/85 bg-white/92 px-4 text-[0.92rem] text-slate-700 outline-none transition focus:border-[#93c5fd] focus:ring-4 focus:ring-[#dbeafe]"
         >
           {feedStatusOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -95,8 +159,24 @@ export default function FeedPage() {
       </section>
 
       <section className="space-y-4">
-        {filteredEvents.length === 0 ? (
-          <div className="rounded-lg border border-slate-200/70 bg-white/88 px-6 py-16 text-center shadow-[0_18px_36px_rgba(15,23,42,0.05)]">
+        {loading ? (
+          <div className="rounded-md border border-slate-400/85 bg-white/92 px-6 py-16 text-center shadow-[0_16px_34px_rgba(15,23,42,0.06)]">
+            <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-slate-950">
+              Loading activity
+            </h2>
+            <p className="mt-2 text-[0.92rem] text-slate-600">
+              Pulling the latest ConnectWise events into the feed.
+            </p>
+          </div>
+        ) : error ? (
+          <div className="rounded-md border border-rose-400/75 bg-rose-50/92 px-6 py-10 text-center shadow-[0_16px_34px_rgba(15,23,42,0.06)]">
+            <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-rose-700">
+              Feed unavailable
+            </h2>
+            <p className="mt-2 text-[0.92rem] text-rose-700/80">{error}</p>
+          </div>
+        ) : filteredEvents.length === 0 ? (
+          <div className="rounded-md border border-slate-400/85 bg-white/92 px-6 py-16 text-center shadow-[0_16px_34px_rgba(15,23,42,0.06)]">
             <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-slate-950">
               No activity matches the current filter
             </h2>
@@ -108,7 +188,7 @@ export default function FeedPage() {
           filteredEvents.map((event) => (
             <article
               key={event.id}
-              className="rounded-lg border border-slate-200/70 bg-white/88 p-5 shadow-[0_18px_36px_rgba(15,23,42,0.05)] sm:p-6"
+              className="rounded-md border border-slate-400/85 bg-white/92 p-5 shadow-[0_16px_34px_rgba(15,23,42,0.06)] sm:p-6"
             >
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">

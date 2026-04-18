@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function SignInPage() {
-  redirect("/auth/login?returnTo=/onboarding");
+  redirect("/auth/login?returnTo=/dashboard");
 }

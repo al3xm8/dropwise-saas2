@@ -22,7 +22,7 @@ const navItems = [
     href: "/rules",
     label: "Rules",
     description: "Routing behavior",
-    available: false,
+    available: true,
   },
   {
     href: "/settings",
@@ -53,7 +53,7 @@ function NavCard({
         active
           ? "border-l-[#2563eb] bg-[linear-gradient(90deg,rgba(219,234,254,0.76)_0%,rgba(255,255,255,0)_100%)]"
           : available
-            ? "border-l-transparent hover:border-l-slate-300 hover:bg-white/58"
+            ? "border-l-transparent hover:border-l-slate-400 hover:bg-white/58"
             : "border-l-transparent opacity-70"
       }`}
     >
@@ -103,16 +103,16 @@ export function AppShell({
 
   return (
     <div className="relative min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(96,165,250,0.14),_transparent_22%),linear-gradient(180deg,_#f8fbff_0%,_#eef4ff_46%,_#f6f3ee_100%)] text-slate-950">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute left-[-6%] top-[2%] h-72 w-72 rounded-full bg-[#60a5fa]/24 blur-3xl" />
-        <div className="absolute left-[9%] top-[18%] h-48 w-48 rounded-full bg-[#facc15]/18 blur-3xl" />
-        <div className="absolute right-[5%] top-[8%] h-64 w-64 rounded-full bg-[#34d399]/18 blur-3xl" />
-        <div className="absolute right-[18%] top-[24%] h-44 w-44 rounded-full bg-[#c084fc]/16 blur-3xl" />
-        <div className="absolute left-[18%] bottom-[15%] h-56 w-56 rounded-full bg-[#fb7185]/16 blur-3xl" />
-        <div className="absolute right-[7%] bottom-[10%] h-72 w-72 rounded-full bg-[#60a5fa]/18 blur-3xl" />
+      <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+        <div className="absolute left-[-12%] top-[-6%] h-[28rem] w-[28rem] rounded-full bg-[#60a5fa]/20 blur-[110px]" />
+        <div className="absolute left-[8%] top-[18%] h-44 w-44 rounded-full bg-[#facc15]/16 blur-[88px]" />
+        <div className="absolute right-[-12%] top-[2%] h-[26rem] w-[26rem] rounded-full bg-[#34d399]/18 blur-[112px]" />
+        <div className="absolute right-[18%] top-[24%] h-40 w-40 rounded-full bg-[#c084fc]/14 blur-[84px]" />
+        <div className="absolute left-[6%] bottom-[2%] h-[24rem] w-[24rem] rounded-full bg-[#fb7185]/16 blur-[108px]" />
+        <div className="absolute right-[0%] bottom-[-8%] h-[28rem] w-[28rem] rounded-full bg-[#60a5fa]/18 blur-[114px]" />
       </div>
-      <div className="flex min-h-screen w-full flex-col md:flex-row">
-        <aside className="hidden w-[280px] shrink-0 border-r border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.92)_0%,rgba(248,250,255,0.88)_100%)] px-5 py-6 shadow-[inset_-1px_0_0_rgba(148,163,184,0.08)] backdrop-blur md:flex md:flex-col">
+      <div className="relative z-10 flex min-h-screen w-full flex-col md:flex-row">
+        <aside className="hidden w-[280px] shrink-0 border-r border-slate-300/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.84)_0%,rgba(248,250,255,0.78)_100%)] px-5 py-6 shadow-[inset_-1px_0_0_rgba(148,163,184,0.14)] backdrop-blur md:flex md:flex-col">
           <div className="flex items-center justify-center px-3 py-5">
             <Link
               href="/dashboard"
@@ -166,7 +166,7 @@ export function AppShell({
             })}
           </nav>
 
-          <div className="mt-auto border-t border-slate-200/80 pt-5">
+          <div className="mt-auto border-t border-slate-300/80 pt-5">
             <div className="px-4">
               <div className="text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
                 Account
@@ -182,7 +182,7 @@ export function AppShell({
             <div className="mt-4 px-4">
               <Link
                 href="/auth/logout"
-                className="flex w-full items-center justify-center rounded-md border border-slate-200/80 bg-white/88 px-4 py-3 text-[0.9rem] font-medium tracking-[-0.02em] text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950"
+                className="flex w-full items-center justify-center rounded-md border border-slate-300/80 bg-white/92 px-4 py-3 text-[0.9rem] font-medium tracking-[-0.02em] text-slate-700 transition-colors hover:border-slate-400 hover:text-slate-950"
               >
                 Sign out
               </Link>
@@ -191,7 +191,7 @@ export function AppShell({
         </aside>
 
         <div className="flex min-h-screen flex-1 flex-col">
-          <header className="border-b border-white/75 bg-white/72 px-4 py-4 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] backdrop-blur md:hidden">
+          <header className="border-b border-slate-300/80 bg-white/64 px-4 py-4 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] backdrop-blur md:hidden">
             <div className="flex items-center justify-between gap-4">
               <Link href="/dashboard" className="inline-flex items-center gap-2">
                 <Image
@@ -206,7 +206,7 @@ export function AppShell({
                   Dropwise
                 </span>
               </Link>
-              <div className="rounded-full border border-slate-200/80 bg-white/84 px-3 py-1.5 text-[0.82rem] font-medium tracking-[-0.015em] text-slate-600">
+              <div className="rounded-full border border-slate-300/80 bg-white/88 px-3 py-1.5 text-[0.82rem] font-medium tracking-[-0.015em] text-slate-600">
                 {currentItem.label}
               </div>
             </div>
@@ -232,8 +232,8 @@ export function AppShell({
                     href={item.href}
                     className={`shrink-0 rounded-full border px-3 py-2 text-[0.88rem] font-medium tracking-[-0.02em] transition-colors ${
                       active
-                        ? "border-[#bfdbfe] bg-[#eff6ff] text-[#1d4ed8]"
-                        : "border-slate-200/80 bg-white/88 text-slate-600"
+                        ? "border-[#93c5fd] bg-[#eff6ff] text-[#1d4ed8]"
+                        : "border-slate-300/80 bg-white/92 text-slate-600"
                     }`}
                   >
                     {item.label}
