@@ -16,7 +16,8 @@ This is the Next.js frontend for Dropwise.
 - the shared authenticated shell is implemented
 - dashboard is the first completed core-app surface
 - feed now exists as the second core-app surface
-- rules and settings remain upcoming surfaces
+- rules now exists as the live third core-app surface
+- settings remains the next missing core-app surface
 
 ## Local Development
 

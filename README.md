@@ -67,6 +67,9 @@ The current working slice is the first authenticated core-app surfaces after onb
 - the authenticated app shell is in place
 - `/dashboard` now exists as the first real post-onboarding core-app surface
 - `/feed` now exists as the activity and routing outcomes surface
+- `/rules` now exists as the live routing management surface
+- ConnectWise intake now evaluates active rules and posts matched tickets to Slack
+- stored `EVENT#...` and `TICKET#...` rows now carry real routing outcomes (`success`, `unmatched`, `failed`)
 
 ## 🛠️ Local development
 
@@ -89,9 +92,12 @@ API environment:
 
 - Spring config values:
   - `app.web.allowed-origins`
+  - `app.public-api-base-url`
   - `aws.region`
   - `aws.secrets-prefix`
   - `aws.dynamodb-table`
+  - `slack.client.id`
+  - `slack.client.secret`
 - AWS credential values:
   - `AWS_ACCESS_KEY_ID`
   - `AWS_SECRET_ACCESS_KEY`
