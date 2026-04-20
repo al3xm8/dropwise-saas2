@@ -14,10 +14,12 @@ import org.springframework.util.StringUtils;
 
 import com.dropwise.api.model.ActivityEvent;
 import com.dropwise.api.model.ConnectwiseSecretRequest;
+import com.dropwise.api.model.MessageCorrelation;
 import com.dropwise.api.model.RoutingRule;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TenantConfigRequest;
 import com.dropwise.api.model.TenantConfigResponse;
+import com.dropwise.api.model.TicketLinkage;
 import com.dropwise.api.model.TicketSnapshot;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -295,6 +297,77 @@ public class AWSService {
         return event;
     }
 
+    public TicketLinkage saveTicketLinkage(TicketLinkage linkage) {
+        String now = Instant.now().toString();
+        Optional<TicketLinkage> existingLinkage = loadTicketLinkage(
+            linkage.getTenantId(),
+            linkage.getSourceSystem(),
+            linkage.getSourceTicketId(),
+            linkage.getDestinationSystem(),
+            linkage.getDestinationConversationId()
+        );
+        String createdAt = existingLinkage.map(TicketLinkage::getCreatedAt).orElse(now);
+
+        Map<String, AttributeValue> item = new LinkedHashMap<>();
+        item.put("pk", stringAttribute(tenantPartitionKey(linkage.getTenantId())));
+        item.put("sk", stringAttribute(linkageSortKey(
+            linkage.getSourceSystem(),
+            linkage.getSourceTicketId(),
+            linkage.getDestinationSystem(),
+            linkage.getDestinationConversationId()
+        )));
+        item.put("itemType", stringAttribute("TICKET_LINKAGE"));
+        item.put("tenantId", stringAttribute(linkage.getTenantId()));
+        item.put("sourceSystem", stringAttribute(linkage.getSourceSystem()));
+        item.put("sourceTicketId", stringAttribute(linkage.getSourceTicketId()));
+        item.put("destinationSystem", stringAttribute(linkage.getDestinationSystem()));
+        item.put("destinationConversationId", stringAttribute(linkage.getDestinationConversationId()));
+        item.put("createdAt", stringAttribute(createdAt));
+        item.put("updatedAt", stringAttribute(now));
+        putIfPresent(item, "destinationWorkspaceId", linkage.getDestinationWorkspaceId());
+        putIfPresent(item, "destinationThreadId", linkage.getDestinationThreadId());
+        putIfPresent(item, "destinationRootMessageId", linkage.getDestinationRootMessageId());
+        putIfPresent(item, "routingRuleId", linkage.getRoutingRuleId());
+        putIfPresent(item, "status", linkage.getStatus());
+        putIfPresent(item, "messageCorrelationsJson", writeJson(linkage.getMessageCorrelations()));
+
+        dynamoDbClient.putItem(PutItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .item(item)
+            .build());
+
+        linkage.setCreatedAt(createdAt);
+        linkage.setUpdatedAt(now);
+        return linkage;
+    }
+
+    public Optional<TicketLinkage> loadTicketLinkage(
+        String tenantId,
+        String sourceSystem,
+        String sourceTicketId,
+        String destinationSystem,
+        String destinationConversationId
+    ) {
+        Map<String, AttributeValue> item = dynamoDbClient.getItem(GetItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(tenantPartitionKey(tenantId)),
+                "sk", stringAttribute(linkageSortKey(
+                    sourceSystem,
+                    sourceTicketId,
+                    destinationSystem,
+                    destinationConversationId
+                ))
+            ))
+            .build()).item();
+
+        if (item == null || item.isEmpty()) {
+            return Optional.empty();
+        }
+
+        return Optional.of(fromTicketLinkageItem(item));
+    }
+
     public List<ActivityEvent> listActivityEvents(String tenantId, int limit) {
         QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
             .tableName(dynamoDbTable)
@@ -564,6 +637,22 @@ public class AWSService {
         return "EVENT#" + createdAt + "#TICKET#" + ticketId + "#" + eventId;
     }
 
+    private String linkageSortKey(
+        String sourceSystem,
+        String sourceTicketId,
+        String destinationSystem,
+        String destinationConversationId
+    ) {
+        return "LINKAGE#"
+            + sourceSystem
+            + "#"
+            + sourceTicketId
+            + "#"
+            + destinationSystem
+            + "#"
+            + destinationConversationId;
+    }
+
     private AttributeValue stringAttribute(String value) {
         return AttributeValue.builder().s(value).build();
     }
@@ -683,6 +772,36 @@ public class AWSService {
         response.setDestinationLabel(stringValue(item, "destinationLabel"));
         response.setRoutingRuleId(stringValue(item, "routingRuleId"));
         response.setCreatedAt(stringValue(item, "createdAt"));
+        return response;
+    }
+
+    private TicketLinkage fromTicketLinkageItem(Map<String, AttributeValue> item) {
+        TicketLinkage response = new TicketLinkage();
+        response.setTenantId(stringValue(item, "tenantId"));
+        response.setSourceSystem(stringValue(item, "sourceSystem"));
+        response.setSourceTicketId(stringValue(item, "sourceTicketId"));
+        response.setDestinationSystem(stringValue(item, "destinationSystem"));
+        response.setDestinationWorkspaceId(stringValue(item, "destinationWorkspaceId"));
+        response.setDestinationConversationId(stringValue(item, "destinationConversationId"));
+        response.setDestinationThreadId(stringValue(item, "destinationThreadId"));
+        response.setDestinationRootMessageId(stringValue(item, "destinationRootMessageId"));
+        response.setRoutingRuleId(stringValue(item, "routingRuleId"));
+        response.setStatus(stringValue(item, "status"));
+        response.setCreatedAt(stringValue(item, "createdAt"));
+        response.setUpdatedAt(stringValue(item, "updatedAt"));
+
+        String messageCorrelationsJson = stringValue(item, "messageCorrelationsJson");
+        if (StringUtils.hasText(messageCorrelationsJson)) {
+            try {
+                response.setMessageCorrelations(objectMapper.readValue(
+                    messageCorrelationsJson,
+                    new TypeReference<List<MessageCorrelation>>() {}
+                ));
+            } catch (JsonProcessingException exception) {
+                response.setMessageCorrelations(new ArrayList<>());
+            }
+        }
+
         return response;
     }
 

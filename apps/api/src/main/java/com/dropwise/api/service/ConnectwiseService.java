@@ -26,6 +26,7 @@ import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ConnectwiseTicketResponse;
 import com.dropwise.api.model.RoutingRule;
 import com.dropwise.api.model.SlackSecretRequest;
+import com.dropwise.api.model.TicketLinkage;
 import com.dropwise.api.model.TicketSnapshot;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -485,7 +486,13 @@ public class ConnectwiseService {
         }
 
         try {
-            SlackMessageResult messageResult = postTicketToSlack(tenantId, ticket, channelId, eventTimestamp);
+            SlackMessageResult messageResult = syncTicketRootMessageToSlack(
+                tenantId,
+                ticket,
+                rule,
+                channelId,
+                eventTimestamp
+            );
             RuleExecutionResult result = new RuleExecutionResult();
             result.status = "success";
             result.description = "Matched rule \"" + valueOrFallback(rule.getName(), "Unnamed rule")
@@ -508,6 +515,80 @@ public class ConnectwiseService {
             result.routingRuleId = rule.getRuleId();
             return result;
         }
+    }
+
+    private SlackMessageResult syncTicketRootMessageToSlack(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        RoutingRule rule,
+        String channelId,
+        String eventTimestamp
+    ) {
+        String ticketId = ticket.getId() != null ? String.valueOf(ticket.getId()) : null;
+        if (!StringUtils.hasText(ticketId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Cannot route a ticket without a ticket id.");
+        }
+
+        SlackSecretRequest secret = awsService.loadSlackSecret(tenantId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack bot token not found."));
+        String botToken = getValidSlackBotToken(tenantId, secret);
+        String messageText = buildSlackMessageText(ticket, eventTimestamp);
+
+        Optional<TicketLinkage> existingLinkage = awsService.loadTicketLinkage(
+            tenantId,
+            "connectwise",
+            ticketId,
+            "slack",
+            channelId
+        );
+
+        if (existingLinkage.isPresent()
+            && StringUtils.hasText(existingLinkage.get().getDestinationRootMessageId())) {
+            SlackMessageResult updateResult = updateSlackRootMessage(
+                tenantId,
+                secret,
+                botToken,
+                channelId,
+                existingLinkage.get().getDestinationRootMessageId(),
+                messageText
+            );
+            TicketLinkage linkage = existingLinkage.get();
+            linkage.setDestinationWorkspaceId(valueOrFallback(secret.getWorkspaceId(), linkage.getDestinationWorkspaceId()));
+            linkage.setDestinationConversationId(valueOrFallback(updateResult.channelId, channelId));
+            linkage.setRoutingRuleId(rule.getRuleId());
+            linkage.setStatus("active");
+            awsService.saveTicketLinkage(linkage);
+            return updateResult;
+        }
+
+        SlackMessageResult postResult = postTicketToSlack(
+            tenantId,
+            secret,
+            botToken,
+            ticket,
+            channelId,
+            eventTimestamp
+        );
+        if (!StringUtils.hasText(postResult.messageTs)) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message post did not return a message timestamp."
+            );
+        }
+
+        TicketLinkage linkage = new TicketLinkage();
+        linkage.setTenantId(tenantId);
+        linkage.setSourceSystem("connectwise");
+        linkage.setSourceTicketId(ticketId);
+        linkage.setDestinationSystem("slack");
+        linkage.setDestinationWorkspaceId(secret.getWorkspaceId());
+        linkage.setDestinationConversationId(valueOrFallback(postResult.channelId, channelId));
+        linkage.setDestinationThreadId(postResult.messageTs);
+        linkage.setDestinationRootMessageId(postResult.messageTs);
+        linkage.setRoutingRuleId(rule.getRuleId());
+        linkage.setStatus("active");
+        awsService.saveTicketLinkage(linkage);
+        return postResult;
     }
 
     private boolean matchesRule(RoutingRule rule, ConnectwiseTicketResponse ticket) {
@@ -581,14 +662,12 @@ public class ConnectwiseService {
 
     private SlackMessageResult postTicketToSlack(
         String tenantId,
+        SlackSecretRequest secret,
+        String botToken,
         ConnectwiseTicketResponse ticket,
         String channelId,
         String eventTimestamp
     ) {
-        SlackSecretRequest secret = awsService.loadSlackSecret(tenantId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack bot token not found."));
-        String botToken = getValidSlackBotToken(tenantId, secret);
-
         try {
             String payload = objectMapper.writeValueAsString(Map.of(
                 "channel", channelId,
@@ -638,6 +717,124 @@ public class ConnectwiseService {
             throw new ResponseStatusException(
                 HttpStatus.BAD_GATEWAY,
                 "Slack message post interrupted."
+            );
+        }
+    }
+
+    private SlackMessageResult updateSlackRootMessage(
+        String tenantId,
+        SlackSecretRequest secret,
+        String botToken,
+        String channelId,
+        String messageTs,
+        String messageText
+    ) {
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "channel", channelId,
+                "ts", messageTs,
+                "text", messageText
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.update"))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message update failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Object okValue = body.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                String errorCode = body.get("error") instanceof String error ? error : response.body();
+                if ("token_expired".equals(errorCode)) {
+                    String refreshedToken = refreshSlackBotToken(tenantId, secret);
+                    return retryUpdateSlackRootMessage(channelId, messageTs, messageText, refreshedToken);
+                }
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message update failed. Body: " + response.body()
+                );
+            }
+
+            SlackMessageResult result = new SlackMessageResult();
+            result.channelId = body.get("channel") instanceof String postedChannelId ? postedChannelId : channelId;
+            result.messageTs = body.get("ts") instanceof String ts ? ts : messageTs;
+            return result;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message update failed: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message update interrupted."
+            );
+        }
+    }
+
+    private SlackMessageResult retryUpdateSlackRootMessage(
+        String channelId,
+        String messageTs,
+        String messageText,
+        String botToken
+    ) {
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "channel", channelId,
+                "ts", messageTs,
+                "text", messageText
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.update"))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message update failed after token refresh with HTTP "
+                        + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Object okValue = body.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack message update failed after token refresh. Body: " + response.body()
+                );
+            }
+
+            SlackMessageResult result = new SlackMessageResult();
+            result.channelId = body.get("channel") instanceof String postedChannelId ? postedChannelId : channelId;
+            result.messageTs = body.get("ts") instanceof String ts ? ts : messageTs;
+            return result;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message update failed after token refresh: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack message update interrupted after token refresh."
             );
         }
     }
