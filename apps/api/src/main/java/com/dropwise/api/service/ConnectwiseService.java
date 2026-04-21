@@ -13,6 +13,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,6 +120,7 @@ public class ConnectwiseService {
     private final String publicApiBaseUrl;
     private final String slackClientId;
     private final String slackClientSecret;
+    private final ConcurrentMap<String, Object> slackLinkageLocks = new ConcurrentHashMap<>();
 
     public ConnectwiseService(
         AWSService awsService,
@@ -529,6 +532,25 @@ public class ConnectwiseService {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Cannot route a ticket without a ticket id.");
         }
 
+        String lockKey = tenantId + "#connectwise#" + ticketId + "#slack#" + channelId;
+        Object lock = slackLinkageLocks.computeIfAbsent(lockKey, key -> new Object());
+        try {
+            synchronized (lock) {
+                return syncTicketRootMessageToSlackLocked(tenantId, ticket, ticketId, rule, channelId, eventTimestamp);
+            }
+        } finally {
+            slackLinkageLocks.remove(lockKey, lock);
+        }
+    }
+
+    private SlackMessageResult syncTicketRootMessageToSlackLocked(
+        String tenantId,
+        ConnectwiseTicketResponse ticket,
+        String ticketId,
+        RoutingRule rule,
+        String channelId,
+        String eventTimestamp
+    ) {
         SlackSecretRequest secret = awsService.loadSlackSecret(tenantId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Slack bot token not found."));
         String botToken = getValidSlackBotToken(tenantId, secret);
