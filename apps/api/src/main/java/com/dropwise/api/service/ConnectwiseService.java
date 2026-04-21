@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -24,8 +25,10 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.dropwise.api.model.ActivityEvent;
+import com.dropwise.api.model.ConnectwiseTicketTimelineItem;
 import com.dropwise.api.model.ConnectwiseWebhookRegistrationResponse;
 import com.dropwise.api.model.ConnectwiseTicketResponse;
+import com.dropwise.api.model.MessageCorrelation;
 import com.dropwise.api.model.RoutingRule;
 import com.dropwise.api.model.SlackSecretRequest;
 import com.dropwise.api.model.TicketLinkage;
@@ -299,6 +302,112 @@ public class ConnectwiseService {
         }
 
         return objectMapper.readValue(response.body(), ConnectwiseTicketResponse.class);
+    }
+
+    private List<ConnectwiseTicketTimelineItem> fetchTicketDiscussion(
+        ConnectwiseCredentials credentials,
+        String ticketId
+    ) throws IOException, InterruptedException {
+        List<ConnectwiseTicketTimelineItem> items = new ArrayList<>();
+        items.addAll(fetchTicketNotes(credentials, ticketId));
+        items.addAll(fetchTicketTimeEntries(credentials, ticketId));
+        items.sort(Comparator.comparing(
+            ConnectwiseTicketTimelineItem::getCreatedAt,
+            Comparator.nullsLast(String::compareTo)
+        ));
+        return items;
+    }
+
+    private List<ConnectwiseTicketTimelineItem> fetchTicketNotes(
+        ConnectwiseCredentials credentials,
+        String ticketId
+    ) throws IOException, InterruptedException {
+        HttpResponse<String> response = sendRequest(
+            credentials,
+            "/service/tickets/" + ticketId + "/notes",
+            "GET",
+            null
+        );
+        int statusCode = response.statusCode();
+        if (statusCode < 200 || statusCode >= 300) {
+            throw new IOException("ConnectWise ticket notes fetch failed with HTTP " + statusCode);
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        List<ConnectwiseTicketTimelineItem> items = new ArrayList<>();
+        if (!root.isArray()) {
+            return items;
+        }
+
+        for (JsonNode note : root) {
+            String text = note.path("text").asText("");
+            if (!StringUtils.hasText(text)) {
+                continue;
+            }
+
+            ConnectwiseTicketTimelineItem item = new ConnectwiseTicketTimelineItem();
+            item.setId(note.path("id").asText(""));
+            item.setType("note");
+            item.setAuthor(firstNonBlank(
+                nestedText(note, "member", "name"),
+                nestedText(note, "contact", "name")
+            ));
+            item.setContent(text);
+            item.setCreatedAt(firstNonBlank(note.path("dateCreated").asText(""), note.path("timeStart").asText("")));
+            item.setDetailDescriptionFlag(note.path("detailDescriptionFlag").asBoolean(false));
+            item.setInternalAnalysisFlag(note.path("internalAnalysisFlag").asBoolean(false));
+            item.setResolutionFlag(note.path("resolutionFlag").asBoolean(false));
+            items.add(item);
+        }
+        return items;
+    }
+
+    private List<ConnectwiseTicketTimelineItem> fetchTicketTimeEntries(
+        ConnectwiseCredentials credentials,
+        String ticketId
+    ) throws IOException, InterruptedException {
+        String conditions = URLEncoder.encode("chargeToId=" + ticketId, StandardCharsets.UTF_8);
+        String fields = URLEncoder.encode(
+            "id,member,timeStart,timeEnd,actualHours,notes,addToDetailDescriptionFlag,addToInternalAnalysisFlag,addToResolutionFlag,dateEntered,_info",
+            StandardCharsets.UTF_8
+        );
+
+        HttpResponse<String> response = sendRequest(
+            credentials,
+            "/time/entries?conditions=" + conditions + "&fields=" + fields,
+            "GET",
+            null
+        );
+        int statusCode = response.statusCode();
+        if (statusCode < 200 || statusCode >= 300) {
+            throw new IOException("ConnectWise time entry fetch failed with HTTP " + statusCode);
+        }
+
+        JsonNode root = objectMapper.readTree(response.body());
+        List<ConnectwiseTicketTimelineItem> items = new ArrayList<>();
+        if (!root.isArray()) {
+            return items;
+        }
+
+        for (JsonNode entry : root) {
+            String notes = entry.path("notes").asText("");
+            if (!StringUtils.hasText(notes)) {
+                continue;
+            }
+
+            ConnectwiseTicketTimelineItem item = new ConnectwiseTicketTimelineItem();
+            item.setId(entry.path("id").asText(""));
+            item.setType("time_entry");
+            item.setAuthor(nestedText(entry, "member", "name"));
+            item.setContent(notes);
+            item.setCreatedAt(firstNonBlank(entry.path("dateEntered").asText(""), entry.path("timeStart").asText("")));
+            item.setDetailDescriptionFlag(entry.path("addToDetailDescriptionFlag").asBoolean(false));
+            item.setInternalAnalysisFlag(entry.path("addToInternalAnalysisFlag").asBoolean(false));
+            item.setResolutionFlag(entry.path("addToResolutionFlag").asBoolean(false));
+            item.setActualHours(entry.path("actualHours").asText(""));
+            items.add(item);
+        }
+        return items;
     }
 
     private boolean isSupportedAction(String action) {
@@ -584,7 +693,8 @@ public class ConnectwiseService {
             linkage.setDestinationWorkspaceId(valueOrFallback(secret.getWorkspaceId(), linkage.getDestinationWorkspaceId()));
             linkage.setRoutingRuleId(rule.getRuleId());
             linkage.setStatus("active");
-            awsService.saveTicketLinkage(linkage);
+            linkage = awsService.saveTicketLinkage(linkage);
+            syncTicketDiscussionToSlackThread(tenantId, ticketId, secret, botToken, linkage);
             return updateResult;
         }
 
@@ -614,8 +724,71 @@ public class ConnectwiseService {
         linkage.setDestinationRootMessageId(postResult.messageTs);
         linkage.setRoutingRuleId(rule.getRuleId());
         linkage.setStatus("active");
-        awsService.saveTicketLinkage(linkage);
+        linkage = awsService.saveTicketLinkage(linkage);
+        syncTicketDiscussionToSlackThread(tenantId, ticketId, secret, botToken, linkage);
         return postResult;
+    }
+
+    private void syncTicketDiscussionToSlackThread(
+        String tenantId,
+        String ticketId,
+        SlackSecretRequest secret,
+        String botToken,
+        TicketLinkage linkage
+    ) {
+        try {
+            Optional<ConnectwiseCredentials> credentials = awsService.loadConnectwiseCredentials(tenantId);
+            if (credentials.isEmpty()) {
+                log.warn("Skipping discussion sync for tenant={} ticketId={} because ConnectWise credentials are incomplete.",
+                    tenantId,
+                    ticketId);
+                return;
+            }
+
+            List<ConnectwiseTicketTimelineItem> discussion = fetchTicketDiscussion(credentials.get(), ticketId);
+            TicketLinkage currentLinkage = linkage;
+            for (ConnectwiseTicketTimelineItem item : discussion) {
+                String providerItemId = buildProviderItemId(item);
+                if (!StringUtils.hasText(providerItemId) || alreadyPosted(currentLinkage, providerItemId)) {
+                    continue;
+                }
+
+                SlackMessageResult replyResult = postSlackThreadReply(
+                    tenantId,
+                    secret,
+                    botToken,
+                    currentLinkage.getDestinationConversationId(),
+                    valueOrFallback(currentLinkage.getDestinationThreadId(), currentLinkage.getDestinationRootMessageId()),
+                    buildSlackThreadReplyText(item)
+                );
+                if (!StringUtils.hasText(replyResult.messageTs)) {
+                    log.warn("Slack thread reply for tenant={} ticketId={} providerItemId={} did not return a timestamp.",
+                        tenantId,
+                        ticketId,
+                        providerItemId);
+                    continue;
+                }
+
+                MessageCorrelation correlation = new MessageCorrelation();
+                correlation.setProviderItemId(providerItemId);
+                correlation.setDestinationMessageId(replyResult.messageTs);
+                currentLinkage.getMessageCorrelations().add(correlation);
+                currentLinkage = awsService.saveTicketLinkage(currentLinkage);
+            }
+        } catch (IOException exception) {
+            log.warn("ConnectWise discussion sync failed for tenant={} ticketId={}: {}",
+                tenantId,
+                ticketId,
+                exception.getMessage());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            log.warn("ConnectWise discussion sync interrupted for tenant={} ticketId={}", tenantId, ticketId);
+        } catch (ResponseStatusException exception) {
+            log.warn("Slack discussion sync failed for tenant={} ticketId={}: {}",
+                tenantId,
+                ticketId,
+                exception.getReason());
+        }
     }
 
     private Optional<TicketLinkage> findReusableSlackLinkage(
@@ -711,6 +884,72 @@ public class ConnectwiseService {
 
     private String buildEventDescription(String action, String outcomeDescription) {
         return "Received ConnectWise " + action.toLowerCase() + " event. " + outcomeDescription;
+    }
+
+    private SlackMessageResult postSlackThreadReply(
+        String tenantId,
+        SlackSecretRequest secret,
+        String botToken,
+        String channelId,
+        String threadTs,
+        String messageText
+    ) {
+        if (!StringUtils.hasText(channelId) || !StringUtils.hasText(threadTs)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Slack thread linkage is incomplete.");
+        }
+
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "channel", channelId,
+                "thread_ts", threadTs,
+                "text", messageText
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.postMessage"))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack thread reply post failed with HTTP " + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Object okValue = body.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                String errorCode = body.get("error") instanceof String error ? error : response.body();
+                if ("token_expired".equals(errorCode)) {
+                    String refreshedToken = refreshSlackBotToken(tenantId, secret);
+                    return retryPostSlackThreadReply(channelId, threadTs, messageText, refreshedToken);
+                }
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack thread reply post failed. Body: " + response.body()
+                );
+            }
+
+            SlackMessageResult result = new SlackMessageResult();
+            result.channelId = body.get("channel") instanceof String postedChannelId ? postedChannelId : channelId;
+            result.messageTs = body.get("ts") instanceof String ts ? ts : null;
+            return result;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack thread reply post failed: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack thread reply post interrupted."
+            );
+        }
     }
 
     private SlackMessageResult postTicketToSlack(
@@ -947,6 +1186,62 @@ public class ConnectwiseService {
         }
     }
 
+    private SlackMessageResult retryPostSlackThreadReply(
+        String channelId,
+        String threadTs,
+        String messageText,
+        String botToken
+    ) {
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "channel", channelId,
+                "thread_ts", threadTs,
+                "text", messageText
+            ));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.postMessage"))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack thread reply post failed after token refresh with HTTP "
+                        + response.statusCode() + ". Body: " + response.body()
+                );
+            }
+
+            Map<String, Object> body = objectMapper.readValue(response.body(), new TypeReference<Map<String, Object>>() {});
+            Object okValue = body.get("ok");
+            if (!(okValue instanceof Boolean ok) || !ok) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Slack thread reply post failed after token refresh. Body: " + response.body()
+                );
+            }
+
+            SlackMessageResult result = new SlackMessageResult();
+            result.channelId = body.get("channel") instanceof String postedChannelId ? postedChannelId : channelId;
+            result.messageTs = body.get("ts") instanceof String ts ? ts : null;
+            return result;
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack thread reply post failed after token refresh: " + exception.getMessage()
+            );
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Slack thread reply post interrupted after token refresh."
+            );
+        }
+    }
+
     private String buildSlackMessageText(ConnectwiseTicketResponse ticket, String eventTimestamp) {
         return "*"
             + valueOrFallback(ticket.getSummary(), "ConnectWise ticket")
@@ -964,6 +1259,53 @@ public class ConnectwiseService {
             + "Assignee: " + valueOrFallback(ticket.getOwner() != null ? ticket.getOwner().getIdentifier() : null, "Unassigned")
             + "\n"
             + "Received: " + eventTimestamp;
+    }
+
+    private String buildSlackThreadReplyText(ConnectwiseTicketTimelineItem item) {
+        String kind = item.isInternalAnalysisFlag()
+            ? "Internal"
+            : item.isResolutionFlag()
+                ? "Resolution"
+                : "time_entry".equalsIgnoreCase(item.getType())
+                    ? "Time Entry"
+                    : "Note";
+
+        StringBuilder builder = new StringBuilder();
+        builder.append("*").append(kind).append("*");
+        if (StringUtils.hasText(item.getId())) {
+            builder.append(" | ID: ").append(item.getId().trim());
+        }
+        if (StringUtils.hasText(item.getAuthor())) {
+            builder.append(" | ").append(item.getAuthor().trim());
+        }
+        builder.append("\n\n");
+        builder.append(item.getContent() == null ? "" : item.getContent().trim());
+        if ("time_entry".equalsIgnoreCase(item.getType()) && StringUtils.hasText(item.getActualHours())) {
+            builder.append("\n\nHours: ").append(item.getActualHours().trim());
+        }
+        return builder.toString();
+    }
+
+    private String buildProviderItemId(ConnectwiseTicketTimelineItem item) {
+        if (item == null || !StringUtils.hasText(item.getId())) {
+            return null;
+        }
+
+        String type = StringUtils.hasText(item.getType()) ? item.getType().trim().toLowerCase() : "note";
+        return type + ":" + item.getId().trim();
+    }
+
+    private boolean alreadyPosted(TicketLinkage linkage, String providerItemId) {
+        if (linkage.getMessageCorrelations() == null || linkage.getMessageCorrelations().isEmpty()) {
+            return false;
+        }
+
+        for (MessageCorrelation correlation : linkage.getMessageCorrelations()) {
+            if (providerItemId.equals(correlation.getProviderItemId())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String getValidSlackBotToken(String tenantId, SlackSecretRequest secret) {
@@ -1069,6 +1411,25 @@ public class ConnectwiseService {
 
     private String valueOrFallback(String value, String fallback) {
         return StringUtils.hasText(value) ? value.trim() : fallback;
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (StringUtils.hasText(first)) {
+            return first.trim();
+        }
+        return StringUtils.hasText(second) ? second.trim() : "";
+    }
+
+    private String nestedText(JsonNode node, String parentField, String childField) {
+        if (node == null || !node.has(parentField) || node.get(parentField).isNull()) {
+            return "";
+        }
+
+        JsonNode parent = node.get(parentField);
+        if (!parent.has(childField) || parent.get(childField).isNull()) {
+            return "";
+        }
+        return parent.get(childField).asText("");
     }
 
     private String stringValue(Object value) {
