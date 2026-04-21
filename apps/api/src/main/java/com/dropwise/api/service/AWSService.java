@@ -34,6 +34,8 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.CreateSecretRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
@@ -92,12 +94,20 @@ public class AWSService {
      */
     public String saveSlackSecret(SlackSecretRequest request) {
         String secretName = secretName(request.getTenantId(), "slack");
+        Optional<SlackSecretRequest> existingSecret = loadSlackSecret(request.getTenantId());
+        String previousWorkspaceId = existingSecret.map(SlackSecretRequest::getWorkspaceId).orElse(null);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("workspaceId", request.getWorkspaceId());
         payload.put("botToken", request.getBotToken());
         payload.put("refreshToken", request.getRefreshToken());
         payload.put("tokenExpiresAt", request.getTokenExpiresAt());
         writeSecret(secretName, payload);
+        syncSlackWorkspaceLookup(
+            request.getTenantId(),
+            previousWorkspaceId,
+            request.getWorkspaceId(),
+            Instant.now().toString()
+        );
         return secretName;
     }
 
@@ -142,6 +152,12 @@ public class AWSService {
             request.getConnectwiseCompanyId(),
             now
         );
+        syncSlackWorkspaceLookup(
+            request.getTenantId(),
+            existingConfig.map(TenantConfigResponse::getSlackWorkspaceId).orElse(null),
+            request.getSlackWorkspaceId(),
+            now
+        );
 
         return fromTenantConfigItem(item);
     }
@@ -183,6 +199,44 @@ public class AWSService {
 
         if (item == null || item.isEmpty()) {
             return Optional.empty();
+        }
+
+        return Optional.ofNullable(stringValue(item, "tenantId"));
+    }
+
+    private Optional<String> scanTenantConfigBySlackWorkspaceId(String slackWorkspaceId) {
+        ScanResponse response = dynamoDbClient.scan(ScanRequest.builder()
+            .tableName(dynamoDbTable)
+            .filterExpression("itemType = :itemType AND slackWorkspaceId = :workspaceId")
+            .expressionAttributeValues(Map.of(
+                ":itemType", stringAttribute("TENANT_CONFIG"),
+                ":workspaceId", stringAttribute(slackWorkspaceId)
+            ))
+            .limit(1)
+            .build());
+
+        if (response.items().isEmpty()) {
+            return Optional.empty();
+        }
+
+        return Optional.ofNullable(stringValue(response.items().get(0), "tenantId"));
+    }
+
+    public Optional<String> resolveTenantIdBySlackWorkspaceId(String slackWorkspaceId) {
+        if (!StringUtils.hasText(slackWorkspaceId)) {
+            return Optional.empty();
+        }
+
+        Map<String, AttributeValue> item = dynamoDbClient.getItem(GetItemRequest.builder()
+            .tableName(dynamoDbTable)
+            .key(Map.of(
+                "pk", stringAttribute(slackWorkspaceLookupPartitionKey(slackWorkspaceId)),
+                "sk", stringAttribute("LOOKUP")
+            ))
+            .build()).item();
+
+        if (item == null || item.isEmpty()) {
+            return scanTenantConfigBySlackWorkspaceId(slackWorkspaceId);
         }
 
         return Optional.ofNullable(stringValue(item, "tenantId"));
@@ -389,6 +443,34 @@ public class AWSService {
             linkages.add(fromTicketLinkageItem(item));
         }
         return linkages;
+    }
+
+    public Optional<TicketLinkage> findTicketLinkageByThreadId(
+        String tenantId,
+        String destinationSystem,
+        String destinationThreadId
+    ) {
+        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
+            .tableName(dynamoDbTable)
+            .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+            .expressionAttributeValues(Map.of(
+                ":pk", stringAttribute(tenantPartitionKey(tenantId)),
+                ":prefix", stringAttribute("LINKAGE#")
+            ))
+            .scanIndexForward(true)
+            .build());
+
+        for (Map<String, AttributeValue> item : response.items()) {
+            TicketLinkage linkage = fromTicketLinkageItem(item);
+            if (!destinationSystem.equalsIgnoreCase(linkage.getDestinationSystem())) {
+                continue;
+            }
+            if (destinationThreadId.equals(linkage.getDestinationThreadId())
+                || destinationThreadId.equals(linkage.getDestinationRootMessageId())) {
+                return Optional.of(linkage);
+            }
+        }
+        return Optional.empty();
     }
 
     public List<ActivityEvent> listActivityEvents(String tenantId, int limit) {
@@ -648,6 +730,10 @@ public class AWSService {
         return "CW_COMPANY#" + connectwiseCompanyId;
     }
 
+    private String slackWorkspaceLookupPartitionKey(String slackWorkspaceId) {
+        return "SLACK_WORKSPACE#" + slackWorkspaceId;
+    }
+
     private String ticketSortKey(String ticketId) {
         return "TICKET#" + ticketId;
     }
@@ -728,6 +814,39 @@ public class AWSService {
             lookupItem.put("itemType", stringAttribute("CONNECTWISE_COMPANY_LOOKUP"));
             lookupItem.put("tenantId", stringAttribute(tenantId));
             lookupItem.put("connectwiseCompanyId", stringAttribute(nextConnectwiseCompanyId));
+            lookupItem.put("updatedAt", stringAttribute(now));
+
+            dynamoDbClient.putItem(PutItemRequest.builder()
+                .tableName(dynamoDbTable)
+                .item(lookupItem)
+                .build());
+        }
+    }
+
+    private void syncSlackWorkspaceLookup(
+        String tenantId,
+        String previousSlackWorkspaceId,
+        String nextSlackWorkspaceId,
+        String now
+    ) {
+        if (StringUtils.hasText(previousSlackWorkspaceId)
+            && !previousSlackWorkspaceId.equals(nextSlackWorkspaceId)) {
+            dynamoDbClient.deleteItem(DeleteItemRequest.builder()
+                .tableName(dynamoDbTable)
+                .key(Map.of(
+                    "pk", stringAttribute(slackWorkspaceLookupPartitionKey(previousSlackWorkspaceId)),
+                    "sk", stringAttribute("LOOKUP")
+                ))
+                .build());
+        }
+
+        if (StringUtils.hasText(nextSlackWorkspaceId)) {
+            Map<String, AttributeValue> lookupItem = new LinkedHashMap<>();
+            lookupItem.put("pk", stringAttribute(slackWorkspaceLookupPartitionKey(nextSlackWorkspaceId)));
+            lookupItem.put("sk", stringAttribute("LOOKUP"));
+            lookupItem.put("itemType", stringAttribute("SLACK_WORKSPACE_LOOKUP"));
+            lookupItem.put("tenantId", stringAttribute(tenantId));
+            lookupItem.put("slackWorkspaceId", stringAttribute(nextSlackWorkspaceId));
             lookupItem.put("updatedAt", stringAttribute(now));
 
             dynamoDbClient.putItem(PutItemRequest.builder()

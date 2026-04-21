@@ -304,6 +304,53 @@ public class ConnectwiseService {
         return objectMapper.readValue(response.body(), ConnectwiseTicketResponse.class);
     }
 
+    public String addSlackReplyAsTimeEntry(
+        String tenantId,
+        String ticketId,
+        String replyText
+    ) throws IOException, InterruptedException {
+        Optional<ConnectwiseCredentials> credentials = awsService.loadConnectwiseCredentials(tenantId);
+        if (credentials.isEmpty()) {
+            throw new IOException("ConnectWise credentials are incomplete for this tenant.");
+        }
+
+        ConnectwiseTicketResponse ticket = fetchTicketById(tenantId, ticketId, credentials.get());
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        if (ticket.getCompany() != null) {
+            payload.put("company", ticket.getCompany());
+        }
+        payload.put("companyType", "Client");
+        payload.put("chargeToId", ticketId);
+        payload.put("chargeToType", "ServiceTicket");
+        payload.put("billableOption", "Billable");
+        payload.put("actualHours", 0.15);
+        payload.put("timeStart", Instant.now().toString());
+        payload.put("notes", normalizeMessageLineEndings(replyText));
+        payload.put("addToDetailDescriptionFlag", true);
+        payload.put("addToInternalAnalysisFlag", false);
+        payload.put("addToResolutionFlag", false);
+        payload.put("emailResourceFlag", true);
+        payload.put("emailContactFlag", true);
+        payload.put("emailCcFlag", false);
+        payload.put("invoiceReady", 1);
+
+        HttpResponse<String> response = sendRequest(
+            credentials.get(),
+            "/time/entries",
+            "POST",
+            objectMapper.writeValueAsString(payload)
+        );
+        int statusCode = response.statusCode();
+        if (statusCode < 200 || statusCode >= 300) {
+            throw new IOException("ConnectWise time entry creation failed with HTTP "
+                + statusCode + ". Body: " + safeBodySnippet(response.body()));
+        }
+
+        JsonNode body = objectMapper.readTree(response.body());
+        String timeEntryId = body.path("id").asText("");
+        return StringUtils.hasText(timeEntryId) ? "time_entry:" + timeEntryId : null;
+    }
+
     private List<ConnectwiseTicketTimelineItem> fetchTicketDiscussion(
         ConnectwiseCredentials credentials,
         String ticketId
@@ -1434,6 +1481,10 @@ public class ConnectwiseService {
 
     private String stringValue(Object value) {
         return value == null ? null : String.valueOf(value).trim();
+    }
+
+    private String normalizeMessageLineEndings(String text) {
+        return text == null ? "" : text.replace("\r\n", "\n").replace("\r", "\n");
     }
 
     private String trim(String value) {
