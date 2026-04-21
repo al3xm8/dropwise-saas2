@@ -541,20 +541,25 @@ public class ConnectwiseService {
             "slack",
             channelId
         );
+        if (existingLinkage.isEmpty()) {
+            existingLinkage = findReusableSlackLinkage(tenantId, ticketId, rule, channelId);
+        }
 
         if (existingLinkage.isPresent()
             && StringUtils.hasText(existingLinkage.get().getDestinationRootMessageId())) {
+            String messageChannelId = StringUtils.hasText(existingLinkage.get().getDestinationConversationId())
+                ? existingLinkage.get().getDestinationConversationId()
+                : channelId;
             SlackMessageResult updateResult = updateSlackRootMessage(
                 tenantId,
                 secret,
                 botToken,
-                channelId,
+                messageChannelId,
                 existingLinkage.get().getDestinationRootMessageId(),
                 messageText
             );
             TicketLinkage linkage = existingLinkage.get();
             linkage.setDestinationWorkspaceId(valueOrFallback(secret.getWorkspaceId(), linkage.getDestinationWorkspaceId()));
-            linkage.setDestinationConversationId(valueOrFallback(updateResult.channelId, channelId));
             linkage.setRoutingRuleId(rule.getRuleId());
             linkage.setStatus("active");
             awsService.saveTicketLinkage(linkage);
@@ -582,13 +587,39 @@ public class ConnectwiseService {
         linkage.setSourceTicketId(ticketId);
         linkage.setDestinationSystem("slack");
         linkage.setDestinationWorkspaceId(secret.getWorkspaceId());
-        linkage.setDestinationConversationId(valueOrFallback(postResult.channelId, channelId));
+        linkage.setDestinationConversationId(channelId);
         linkage.setDestinationThreadId(postResult.messageTs);
         linkage.setDestinationRootMessageId(postResult.messageTs);
         linkage.setRoutingRuleId(rule.getRuleId());
         linkage.setStatus("active");
         awsService.saveTicketLinkage(linkage);
         return postResult;
+    }
+
+    private Optional<TicketLinkage> findReusableSlackLinkage(
+        String tenantId,
+        String ticketId,
+        RoutingRule rule,
+        String channelId
+    ) {
+        List<TicketLinkage> linkages = awsService.listTicketLinkages(tenantId, "connectwise", ticketId, "slack");
+        if (linkages.isEmpty()) {
+            return Optional.empty();
+        }
+
+        for (TicketLinkage linkage : linkages) {
+            if (channelId.equals(linkage.getDestinationConversationId())) {
+                return Optional.of(linkage);
+            }
+        }
+
+        for (TicketLinkage linkage : linkages) {
+            if (StringUtils.hasText(rule.getRuleId()) && rule.getRuleId().equals(linkage.getRoutingRuleId())) {
+                return Optional.of(linkage);
+            }
+        }
+
+        return linkages.size() == 1 ? Optional.of(linkages.get(0)) : Optional.empty();
     }
 
     private boolean matchesRule(RoutingRule rule, ConnectwiseTicketResponse ticket) {

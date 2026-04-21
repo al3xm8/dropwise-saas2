@@ -368,6 +368,29 @@ public class AWSService {
         return Optional.of(fromTicketLinkageItem(item));
     }
 
+    public List<TicketLinkage> listTicketLinkages(
+        String tenantId,
+        String sourceSystem,
+        String sourceTicketId,
+        String destinationSystem
+    ) {
+        QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
+            .tableName(dynamoDbTable)
+            .keyConditionExpression("pk = :pk AND begins_with(sk, :prefix)")
+            .expressionAttributeValues(Map.of(
+                ":pk", stringAttribute(tenantPartitionKey(tenantId)),
+                ":prefix", stringAttribute(linkageSortKeyPrefix(sourceSystem, sourceTicketId, destinationSystem))
+            ))
+            .scanIndexForward(true)
+            .build());
+
+        List<TicketLinkage> linkages = new ArrayList<>();
+        for (Map<String, AttributeValue> item : response.items()) {
+            linkages.add(fromTicketLinkageItem(item));
+        }
+        return linkages;
+    }
+
     public List<ActivityEvent> listActivityEvents(String tenantId, int limit) {
         QueryResponse response = dynamoDbClient.query(QueryRequest.builder()
             .tableName(dynamoDbTable)
@@ -651,6 +674,20 @@ public class AWSService {
             + destinationSystem
             + "#"
             + destinationConversationId;
+    }
+
+    private String linkageSortKeyPrefix(
+        String sourceSystem,
+        String sourceTicketId,
+        String destinationSystem
+    ) {
+        return "LINKAGE#"
+            + sourceSystem
+            + "#"
+            + sourceTicketId
+            + "#"
+            + destinationSystem
+            + "#";
     }
 
     private AttributeValue stringAttribute(String value) {
