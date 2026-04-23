@@ -28,7 +28,7 @@ const navItems = [
     href: "/settings",
     label: "Settings",
     description: "Tenant configuration",
-    available: false,
+    available: true,
   },
 ];
 
