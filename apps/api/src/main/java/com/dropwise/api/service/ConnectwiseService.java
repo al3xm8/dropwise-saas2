@@ -8,6 +8,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
@@ -46,6 +48,9 @@ public class ConnectwiseService {
     private static final String CALLBACK_TYPE = "Ticket";
     private static final String CALLBACK_LEVEL = "Board";
     private static final long SLACK_TOKEN_REFRESH_BUFFER_MS = 300_000L;
+    private static final DateTimeFormatter CONNECTWISE_TIME_ENTRY_FORMATTER = DateTimeFormatter
+        .ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+        .withZone(ZoneId.of("UTC"));
 
     public static class ConnectwiseCredentials {
         private String connectwiseCompanyId;
@@ -324,7 +329,7 @@ public class ConnectwiseService {
         payload.put("chargeToType", "ServiceTicket");
         payload.put("billableOption", "Billable");
         payload.put("actualHours", 0.15);
-        payload.put("timeStart", Instant.now().toString());
+        payload.put("timeStart", CONNECTWISE_TIME_ENTRY_FORMATTER.format(Instant.now()));
         payload.put("notes", normalizeMessageLineEndings(replyText));
         payload.put("addToDetailDescriptionFlag", true);
         payload.put("addToInternalAnalysisFlag", false);
