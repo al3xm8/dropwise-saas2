@@ -9,6 +9,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -329,7 +330,7 @@ public class ConnectwiseService {
         payload.put("chargeToType", "ServiceTicket");
         payload.put("billableOption", "Billable");
         payload.put("actualHours", 0.15);
-        payload.put("timeStart", CONNECTWISE_TIME_ENTRY_FORMATTER.format(Instant.now()));
+        payload.put("timeStart", getCurrentTimeForPayload());
         payload.put("notes", normalizeMessageLineEndings(replyText));
         payload.put("addToDetailDescriptionFlag", true);
         payload.put("addToInternalAnalysisFlag", false);
@@ -1463,6 +1464,12 @@ public class ConnectwiseService {
 
     private String valueOrFallback(String value, String fallback) {
         return StringUtils.hasText(value) ? value.trim() : fallback;
+    }
+
+    private String getCurrentTimeForPayload() {
+        ZonedDateTime localTime = ZonedDateTime.now(ZoneId.of("America/New_York"));
+        Instant utcInstant = localTime.toInstant();
+        return CONNECTWISE_TIME_ENTRY_FORMATTER.format(utcInstant);
     }
 
     private String firstNonBlank(String first, String second) {
