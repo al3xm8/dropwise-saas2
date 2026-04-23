@@ -5,6 +5,8 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -32,6 +34,7 @@ public class SlackEventService {
     private final ConnectwiseService connectwiseService;
     private final ObjectMapper objectMapper;
     private final String signingSecret;
+    private final ConcurrentMap<String, Object> slackReplyLocks = new ConcurrentHashMap<>();
 
     public SlackEventService(
         AWSService awsService,
@@ -136,45 +139,77 @@ public class SlackEventService {
             return ResponseEntity.ok("Duplicate reply ignored");
         }
 
+        String replyLockKey = tenantId + "#slack#" + channelId + "#message#" + messageTs;
+        Object replyLock = slackReplyLocks.computeIfAbsent(replyLockKey, key -> new Object());
         try {
-            log.info(
-                "Writing Slack reply to ConnectWise tenantId={} ticketId={} channel={} messageTs={}.",
-                tenantId,
-                ticketLinkage.getSourceTicketId(),
-                channelId,
-                messageTs
-            );
-            String providerItemId = connectwiseService.addSlackReplyAsTimeEntry(
-                tenantId,
-                ticketLinkage.getSourceTicketId(),
-                text
-            );
+            synchronized (replyLock) {
+                Optional<TicketLinkage> latestLinkage = awsService.findTicketLinkageByThreadId(tenantId, "slack", lookupThreadTs);
+                if (latestLinkage.isEmpty()) {
+                    log.info(
+                        "Slack reply linkage disappeared before writeback tenantId={} channel={} lookupThreadTs={} messageTs={}.",
+                        tenantId,
+                        channelId,
+                        lookupThreadTs,
+                        messageTs
+                    );
+                    return ResponseEntity.ok("No matching linkage");
+                }
 
-            MessageCorrelation correlation = new MessageCorrelation();
-            correlation.setProviderItemId(StringUtils.hasText(providerItemId) ? providerItemId : "slack:" + messageTs);
-            correlation.setDestinationMessageId(messageTs);
-            ticketLinkage.getMessageCorrelations().add(correlation);
-            awsService.saveTicketLinkage(ticketLinkage);
-            log.info(
-                "Saved Slack reply correlation tenantId={} ticketId={} providerItemId={} messageTs={}.",
-                tenantId,
-                ticketLinkage.getSourceTicketId(),
-                correlation.getProviderItemId(),
-                messageTs
-            );
-        } catch (Exception exception) {
-            log.warn(
-                "Slack reply writeback failed tenantId={} ticketId={} channel={} messageTs={}.",
-                tenantId,
-                ticketLinkage.getSourceTicketId(),
-                channelId,
-                messageTs,
-                exception
-            );
-            throw new ResponseStatusException(
-                HttpStatus.BAD_GATEWAY,
-                "Slack reply writeback failed: " + exception.getMessage()
-            );
+                ticketLinkage = latestLinkage.get();
+                if (isSlackMessageAlreadyCorrelated(ticketLinkage, messageTs)) {
+                    log.info(
+                        "Ignoring duplicate Slack reply after lock tenantId={} ticketId={} channel={} messageTs={}.",
+                        tenantId,
+                        ticketLinkage.getSourceTicketId(),
+                        channelId,
+                        messageTs
+                    );
+                    return ResponseEntity.ok("Duplicate reply ignored");
+                }
+
+                try {
+                    log.info(
+                        "Writing Slack reply to ConnectWise tenantId={} ticketId={} channel={} messageTs={}.",
+                        tenantId,
+                        ticketLinkage.getSourceTicketId(),
+                        channelId,
+                        messageTs
+                    );
+                    String providerItemId = connectwiseService.addSlackReplyAsTimeEntry(
+                        tenantId,
+                        ticketLinkage.getSourceTicketId(),
+                        text
+                    );
+
+                    MessageCorrelation correlation = new MessageCorrelation();
+                    correlation.setProviderItemId(StringUtils.hasText(providerItemId) ? providerItemId : "slack:" + messageTs);
+                    correlation.setDestinationMessageId(messageTs);
+                    ticketLinkage.getMessageCorrelations().add(correlation);
+                    awsService.saveTicketLinkage(ticketLinkage);
+                    log.info(
+                        "Saved Slack reply correlation tenantId={} ticketId={} providerItemId={} messageTs={}.",
+                        tenantId,
+                        ticketLinkage.getSourceTicketId(),
+                        correlation.getProviderItemId(),
+                        messageTs
+                    );
+                } catch (Exception exception) {
+                    log.warn(
+                        "Slack reply writeback failed tenantId={} ticketId={} channel={} messageTs={}.",
+                        tenantId,
+                        ticketLinkage.getSourceTicketId(),
+                        channelId,
+                        messageTs,
+                        exception
+                    );
+                    throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Slack reply writeback failed: " + exception.getMessage()
+                    );
+                }
+            }
+        } finally {
+            slackReplyLocks.remove(replyLockKey, replyLock);
         }
 
         return ResponseEntity.ok("OK");
