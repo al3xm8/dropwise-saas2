@@ -9,6 +9,8 @@ import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class SlackEventService {
+    private static final Logger log = LoggerFactory.getLogger(SlackEventService.class);
     private static final long SLACK_REQUEST_MAX_AGE_SECONDS = 300L;
 
     private final AWSService awsService;
@@ -43,6 +46,7 @@ public class SlackEventService {
 
     public ResponseEntity<String> handleEvent(String slackSignature, String slackTimestamp, String rawBody) {
         if (!isSlackRequestAuthentic(slackTimestamp, slackSignature, rawBody)) {
+            log.warn("Rejected Slack event with invalid signature or timestamp.");
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid Slack signature");
         }
 
@@ -50,59 +54,96 @@ public class SlackEventService {
         try {
             payload = objectMapper.readValue(rawBody, new TypeReference<Map<String, Object>>() {});
         } catch (Exception exception) {
+            log.warn("Rejected Slack event with invalid JSON payload.", exception);
             return ResponseEntity.badRequest().body("Invalid JSON payload");
         }
 
-        if ("url_verification".equals(asString(payload.get("type")))) {
+        String payloadType = asString(payload.get("type"));
+        if ("url_verification".equals(payloadType)) {
+            log.info("Received Slack URL verification challenge.");
             return ResponseEntity.ok(asString(payload.get("challenge")));
         }
 
-        if (!"event_callback".equals(asString(payload.get("type")))) {
+        if (!"event_callback".equals(payloadType)) {
+            log.info("Ignoring Slack payload type {}.", payloadType);
             return ResponseEntity.ok("OK");
         }
 
         String tenantId = resolveTenantId(payload);
         Object eventObject = payload.get("event");
         if (!(eventObject instanceof Map<?, ?> rawEvent)) {
+            log.info("Ignoring Slack event callback without event object for tenant {}.", tenantId);
             return ResponseEntity.ok("OK");
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> event = (Map<String, Object>) rawEvent;
-        if (!"message".equals(asString(event.get("type")))) {
+        String eventType = asString(event.get("type"));
+        if (!"message".equals(eventType)) {
+            log.info("Ignoring Slack event type {} for tenant {}.", eventType, tenantId);
             return ResponseEntity.ok("OK");
-        }
-        if (event.get("bot_id") != null || event.get("bot_profile") != null) {
-            return ResponseEntity.ok("Ignored bot event");
         }
 
         String subtype = asString(event.get("subtype"));
-        if (subtype != null) {
-            return ResponseEntity.ok("Ignored subtype");
-        }
-
+        String channelId = asString(event.get("channel"));
+        String userId = asString(event.get("user"));
         String threadTs = asString(event.get("thread_ts"));
         String messageTs = asString(event.get("ts"));
-        if (!StringUtils.hasText(threadTs) || !StringUtils.hasText(messageTs) || threadTs.equals(messageTs)) {
+        log.info(
+            "Received Slack message event tenantId={} channel={} ts={} threadTs={} user={} subtype={} bot={}.",
+            tenantId,
+            channelId,
+            messageTs,
+            threadTs,
+            userId,
+            subtype,
+            event.get("bot_id") != null || event.get("bot_profile") != null
+        );
+
+        if (event.get("bot_id") != null || event.get("bot_profile") != null) {
+            log.info("Ignoring Slack bot message tenantId={} channel={} ts={} threadTs={}.", tenantId, channelId, messageTs, threadTs);
+            return ResponseEntity.ok("Ignored bot event");
+        }
+
+        String lookupThreadTs = StringUtils.hasText(threadTs) ? threadTs : messageTs;
+        if (!StringUtils.hasText(lookupThreadTs) || !StringUtils.hasText(messageTs)) {
+            log.info("Ignoring Slack message without usable ts tenantId={} channel={} ts={} threadTs={}.", tenantId, channelId, messageTs, threadTs);
             return ResponseEntity.ok("OK");
         }
 
         String text = asString(event.get("text"));
         if (!StringUtils.hasText(text)) {
+            log.info("Ignoring Slack message with empty text tenantId={} channel={} ts={} threadTs={} subtype={}.", tenantId, channelId, messageTs, threadTs, subtype);
             return ResponseEntity.ok("Ignored empty reply");
         }
 
-        Optional<TicketLinkage> linkage = awsService.findTicketLinkageByThreadId(tenantId, "slack", threadTs);
+        log.info("Looking up ticket linkage for Slack thread tenantId={} channel={} lookupThreadTs={}.", tenantId, channelId, lookupThreadTs);
+        Optional<TicketLinkage> linkage = awsService.findTicketLinkageByThreadId(tenantId, "slack", lookupThreadTs);
         if (linkage.isEmpty()) {
+            log.info("No ticket linkage found for Slack thread tenantId={} channel={} lookupThreadTs={} messageTs={}.", tenantId, channelId, lookupThreadTs, messageTs);
             return ResponseEntity.ok("No matching linkage");
         }
 
         TicketLinkage ticketLinkage = linkage.get();
         if (isSlackMessageAlreadyCorrelated(ticketLinkage, messageTs)) {
+            log.info(
+                "Ignoring already-correlated Slack reply tenantId={} ticketId={} channel={} messageTs={}.",
+                tenantId,
+                ticketLinkage.getSourceTicketId(),
+                channelId,
+                messageTs
+            );
             return ResponseEntity.ok("Duplicate reply ignored");
         }
 
         try {
+            log.info(
+                "Writing Slack reply to ConnectWise tenantId={} ticketId={} channel={} messageTs={}.",
+                tenantId,
+                ticketLinkage.getSourceTicketId(),
+                channelId,
+                messageTs
+            );
             String providerItemId = connectwiseService.addSlackReplyAsTimeEntry(
                 tenantId,
                 ticketLinkage.getSourceTicketId(),
@@ -114,7 +155,22 @@ public class SlackEventService {
             correlation.setDestinationMessageId(messageTs);
             ticketLinkage.getMessageCorrelations().add(correlation);
             awsService.saveTicketLinkage(ticketLinkage);
+            log.info(
+                "Saved Slack reply correlation tenantId={} ticketId={} providerItemId={} messageTs={}.",
+                tenantId,
+                ticketLinkage.getSourceTicketId(),
+                correlation.getProviderItemId(),
+                messageTs
+            );
         } catch (Exception exception) {
+            log.warn(
+                "Slack reply writeback failed tenantId={} ticketId={} channel={} messageTs={}.",
+                tenantId,
+                ticketLinkage.getSourceTicketId(),
+                channelId,
+                messageTs,
+                exception
+            );
             throw new ResponseStatusException(
                 HttpStatus.BAD_GATEWAY,
                 "Slack reply writeback failed: " + exception.getMessage()
