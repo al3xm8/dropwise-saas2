@@ -210,20 +210,7 @@ export default function RulesPage() {
     <>
       <div className="space-y-6">
         <section className="rounded-md border border-slate-400/85 bg-white/92 p-5 shadow-[0_16px_34px_rgba(15,23,42,0.06)] sm:p-6">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <p className="text-[0.76rem] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                Routing rules
-              </p>
-              <h1 className="mt-1 text-[1.6rem] font-semibold tracking-[-0.045em] text-slate-950">
-                Rules
-              </h1>
-              <p className="mt-2 max-w-3xl text-[0.92rem] leading-7 tracking-[-0.015em] text-slate-600">
-                Create and manage live routing rules. Rules are evaluated top to bottom and
-                the first match wins.
-              </p>
-            </div>
-
+          <div className="flex justify-end">
             <button
               type="button"
               disabled={!slackChannels.length}

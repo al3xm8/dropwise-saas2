@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type TenantConfigResponse = {
@@ -183,28 +184,6 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-md border border-slate-400/85 bg-white/92 p-5 shadow-[0_16px_34px_rgba(15,23,42,0.06)] sm:p-6">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="text-[0.76rem] font-semibold uppercase tracking-[0.16em] text-slate-400">
-              Workspace settings
-            </p>
-            <h1 className="mt-1 text-[1.6rem] font-semibold tracking-[-0.045em] text-slate-950">
-              Settings
-            </h1>
-            <p className="mt-2 max-w-2xl text-[0.95rem] leading-7 tracking-[-0.018em] text-slate-600">
-              Review the tenant identity, integration health, and onboarding-derived
-              configuration currently driving routing and Slack communication.
-            </p>
-          </div>
-
-          <div className="rounded-md border border-slate-300/85 bg-slate-50/88 px-4 py-3 text-[0.86rem] tracking-[-0.018em] text-slate-600">
-            <div className="font-semibold text-slate-800">Tenant</div>
-            <div className="mt-1 break-all">{configValue(config?.tenantId ?? tenantId)}</div>
-          </div>
-        </div>
-      </section>
-
       {loading ? (
         <section className="rounded-md border border-slate-400/85 bg-white/92 px-6 py-16 text-center shadow-[0_16px_34px_rgba(15,23,42,0.06)]">
           <h2 className="text-[1.1rem] font-semibold tracking-[-0.03em] text-slate-950">
@@ -223,31 +202,6 @@ export default function SettingsPage() {
         </section>
       ) : (
         <>
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {overview.map((item) => (
-              <article
-                key={item.label}
-                className="rounded-md border border-slate-400/80 bg-white/94 px-4 py-4 shadow-[0_12px_24px_rgba(15,23,42,0.05)]"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-[0.82rem] font-medium tracking-[-0.015em] text-slate-500">
-                    {item.label}
-                  </p>
-                  <span
-                    className={`inline-flex rounded-full px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.12em] ring-1 ${statusTone(
-                      item.ready,
-                    )}`}
-                  >
-                    {item.value}
-                  </span>
-                </div>
-                <p className="mt-3 text-[0.9rem] leading-6 tracking-[-0.018em] text-slate-700">
-                  {item.detail}
-                </p>
-              </article>
-            ))}
-          </section>
-
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
             <section className="rounded-md border border-slate-400/85 bg-white/92 p-5 shadow-[0_16px_34px_rgba(15,23,42,0.06)] sm:p-6">
               <div>
@@ -257,6 +211,26 @@ export default function SettingsPage() {
                 <h2 className="mt-1 text-[1.2rem] font-semibold tracking-[-0.035em] text-slate-950">
                   Workspace identity
                 </h2>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                {overview.map((item) => (
+                  <div
+                    key={item.label}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-slate-50/78 px-3 py-2"
+                  >
+                    <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                      {item.label}
+                    </span>
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.12em] ring-1 ${statusTone(
+                        item.ready,
+                      )}`}
+                    >
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
               </div>
 
               <dl className="mt-5 divide-y divide-slate-200/80">
@@ -281,6 +255,21 @@ export default function SettingsPage() {
                   muted={!onboardingReady}
                 />
               </dl>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                <Link
+                  href="/rules"
+                  className="inline-flex h-11 items-center justify-center rounded-md bg-[#2563eb] px-5 text-[0.92rem] font-medium text-white transition hover:bg-[#1d4ed8]"
+                >
+                  Review rules
+                </Link>
+                <Link
+                  href="/onboarding"
+                  className="inline-flex h-11 items-center justify-center rounded-md border border-slate-300/85 bg-white/92 px-5 text-[0.92rem] font-medium text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
+                >
+                  Open onboarding
+                </Link>
+              </div>
             </section>
 
             <section className="rounded-md border border-slate-400/85 bg-white/92 p-5 shadow-[0_16px_34px_rgba(15,23,42,0.06)] sm:p-6">
@@ -400,22 +389,6 @@ export default function SettingsPage() {
               </dl>
             </section>
           </div>
-
-          <section className="rounded-md border border-slate-300/85 bg-[linear-gradient(180deg,rgba(248,250,252,0.9),rgba(255,255,255,0.92))] p-5 shadow-[0_12px_24px_rgba(15,23,42,0.04)] sm:p-6">
-            <div>
-              <p className="text-[0.76rem] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                Deferred controls
-              </p>
-              <h2 className="mt-1 text-[1.15rem] font-semibold tracking-[-0.03em] text-slate-950">
-                Next admin capabilities
-              </h2>
-              <p className="mt-2 max-w-3xl text-[0.93rem] leading-7 tracking-[-0.018em] text-slate-600">
-                This first settings slice is read-first. Reconnect flows, destination updates,
-                onboarding re-entry, and broader admin controls should be added only once the
-                underlying save paths are defined cleanly.
-              </p>
-            </div>
-          </section>
         </>
       )}
     </div>

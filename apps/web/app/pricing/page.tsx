@@ -1,73 +1,159 @@
+import Image from "next/image";
 import Link from "next/link";
 
-const starterFeatures = [
-  "$49/month base price",
-  "Up to 2 users included",
-  "User 3: +$30, user 4: +$45, user 5+: +$65 each",
-  "1 ticketing source",
-  "1 messaging workspace",
-  "Up to 2 destination channels",
-  "Basic ticket routing into messaging",
-  "Guided self-serve setup",
-  "Standard async support",
-];
-
-const teamFeatures = [
-  "Starts at 5 users",
-  "Starting around $199/month",
-  "Expanded source and workspace coverage",
-  "Advanced routing with automatic assignment",
-  "Shared admin controls",
-  "Onboarding assistance",
-  "Priority support",
-  "Flat base + user pricing through sales",
+const tiers = [
+  {
+    name: "Starter",
+    price: "$49/mo",
+    summary: "For testing, solo usage, and simple multi-system flows.",
+    ctaLabel: "Get started",
+    ctaHref: "/signin",
+    note: "Best for getting two systems connected quickly without overbuilding the workflow.",
+    features: [
+      "Up to 2 integrations total",
+      "Up to 5 routing rules",
+      "Up to 3 destinations",
+      "1,000 events/month included",
+      "$10 per 1,000 events overage",
+      "Guided self-serve setup",
+      "Standard async support",
+    ],
+  },
+  {
+    name: "Growth",
+    price: "$149/mo",
+    summary: "For real internal IT teams connecting more of the daily workflow.",
+    ctaLabel: "Get started",
+    ctaHref: "/signin",
+    note: "Best for teams connecting several systems without needing fully custom packaging yet.",
+    features: [
+      "Up to 5 integrations",
+      "Up to 20 routing rules",
+      "Up to 10 destinations",
+      "5,000 events/month included",
+      "$8 per 1,000 events overage",
+      "Broader routing coverage",
+      "Production-ready internal deployment",
+    ],
+  },
+  {
+    name: "Pro",
+    price: "$349/mo",
+    summary: "For MSPs and complex multi-system routing at higher operational scale.",
+    ctaLabel: "Contact sales",
+    ctaHref: "/contact-sales",
+    note: "Best for routing across a large stack with priority support and fewer packaging limits.",
+    features: [
+      "Up to 10 integrations",
+      "Unlimited routing rules",
+      "Unlimited destinations",
+      "15,000 events/month included",
+      "$6 per 1,000 events overage",
+      "Priority support",
+      "High-complexity routing coverage",
+    ],
+  },
+  {
+    name: "Enterprise",
+    price: "Custom",
+    summary: "For large environments, procurement-driven rollout, and advanced operational control.",
+    ctaLabel: "Contact sales",
+    ctaHref: "/contact-sales",
+    note: "Best for multi-team deployment, custom support, and negotiated high-volume usage.",
+    features: [
+      "Unlimited integrations",
+      "Unlimited routing",
+      "Unlimited destinations",
+      "Multi-team environments",
+      "$3-$5 per 1,000 events at scale",
+      "Dedicated support",
+      "Room for advanced admin and audit features",
+    ],
+  },
 ];
 
 const comparisonRows = [
   {
     label: "Best for",
-    starter: "One operator or a very small setup",
-    team: "Broader rollout across a real team",
+    starter: "Simple flows and early production use",
+    growth: "Real internal IT team deployment",
+    pro: "Complex routing programs and MSP use",
+    enterprise: "Large-scale custom rollout",
   },
   {
-    label: "Users",
-    starter: "Up to 2 included, expandable past 2",
-    team: "Starts at 5 with shared deployment",
+    label: "Integrations",
+    starter: "Up to 2",
+    growth: "Up to 5",
+    pro: "Up to 10",
+    enterprise: "Unlimited",
   },
   {
-    label: "Ticketing sources",
-    starter: "1 source",
-    team: "Expanded source coverage",
+    label: "Routing rules",
+    starter: "Up to 5",
+    growth: "Up to 20",
+    pro: "Unlimited",
+    enterprise: "Unlimited",
   },
   {
-    label: "Messaging coverage",
-    starter: "1 workspace, up to 2 channels",
-    team: "Broader workspace and channel routing",
+    label: "Destinations",
+    starter: "Up to 3",
+    growth: "Up to 10",
+    pro: "Unlimited",
+    enterprise: "Unlimited",
   },
   {
-    label: "Routing",
-    starter: "Basic routing into messaging",
-    team: "Advanced routing and automatic assignment",
+    label: "Included events",
+    starter: "1,000/month",
+    growth: "5,000/month",
+    pro: "15,000/month",
+    enterprise: "Custom volume",
   },
   {
-    label: "Buying motion",
-    starter: "Self-serve",
-    team: "Sales-assisted",
+    label: "Support path",
+    starter: "Standard async support",
+    growth: "Operational self-serve",
+    pro: "Priority support",
+    enterprise: "Dedicated support",
   },
 ];
 
 export default function PricingPage() {
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(122,134,255,0.22),_transparent_28%),linear-gradient(180deg,_#f7f9fe_0%,_#edf2ff_40%,_#f7f4ee_100%)] px-4 py-12 sm:px-6 lg:px-10">
-      <div className="mx-auto max-w-[1240px]">
-        <div className="flex items-center justify-between gap-4">
+      <div className="mx-auto max-w-[1340px]">
+        <header className="mx-auto flex h-16 w-full max-w-[1240px] items-center justify-between rounded-full bg-white/55 px-4 shadow-[0_1px_0_rgba(255,255,255,0.7)_inset,0_18px_40px_rgba(19,34,87,0.08)] ring-1 ring-white/80 backdrop-blur-md sm:px-6">
           <Link
             href="/"
-            className="text-[0.9rem] font-medium tracking-[-0.02em] text-slate-600 transition-colors hover:text-slate-950"
+            className="flex items-center gap-0.5 text-slate-950 transition-all duration-200 hover:text-[#3b82f6] hover:[text-shadow:0_0_18px_rgba(59,130,246,0.28)]"
           >
-            Back to home
+            <Image
+              src="/wisedrop-icon.svg"
+              alt="Dropwise icon"
+              width={26}
+              height={26}
+              className="h-[26px] w-[26px]"
+            />
+            <span className="text-[1.05rem] font-semibold tracking-[-0.03em]">
+              dropwise
+            </span>
           </Link>
-          <div className="flex items-center gap-3">
+
+          <nav className="hidden items-center gap-7 lg:flex">
+            <Link
+              href="/#core-workflow"
+              className="text-[0.95rem] font-medium tracking-[-0.015em] text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:text-slate-950"
+            >
+              Product
+            </Link>
+            <Link
+              href="/pricing"
+              className="text-[0.95rem] font-medium tracking-[-0.015em] text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:text-slate-950"
+            >
+              Pricing
+            </Link>
+          </nav>
+
+          <div className="hidden items-center gap-3 sm:flex">
             <Link
               href="/signin"
               className="rounded-full px-3 py-2 text-[0.94rem] font-medium tracking-[-0.015em] text-slate-700 transition-colors hover:text-slate-950"
@@ -82,7 +168,28 @@ export default function PricingPage() {
               Contact sales
             </Link>
           </div>
-        </div>
+
+          <button
+            type="button"
+            aria-label="Open navigation"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-slate-700 transition-colors hover:bg-white/70 hover:text-slate-950 sm:hidden"
+          >
+            <span className="sr-only">Open navigation</span>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            >
+              <path d="M4 7h16" />
+              <path d="M4 12h16" />
+              <path d="M4 17h16" />
+            </svg>
+          </button>
+        </header>
 
         <section className="relative mt-10 overflow-hidden rounded-[2.2rem] border border-slate-200/70 bg-white/72 px-6 py-10 shadow-[0_20px_55px_rgba(15,23,42,0.05)] ring-1 ring-white/80 backdrop-blur-sm sm:px-8 sm:py-12 lg:px-10 lg:py-14">
           <div className="pointer-events-none absolute inset-0">
@@ -91,147 +198,82 @@ export default function PricingPage() {
             <div className="absolute left-[42%] bottom-[8%] h-40 w-40 rounded-full bg-[#34d399]/12 blur-3xl" />
           </div>
 
-          <div className="relative max-w-[48rem]">
+          <div className="relative max-w-[56rem]">
             <div className="text-[0.78rem] font-semibold uppercase tracking-[0.18em] text-[#2563eb]">
               Pricing
             </div>
-            <h1 className="mt-4 max-w-[12ch] text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-slate-950 sm:text-[3.1rem] lg:text-[3.65rem]">
-              One product, two ways to start.
+            <h1 className="mt-4 max-w-[13ch] text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.055em] text-slate-950 sm:text-[3.1rem] lg:text-[3.65rem]">
+              Start with a couple systems. Expand as routing grows.
             </h1>
-            <p className="mt-4 max-w-[42rem] text-[1rem] leading-8 tracking-[-0.02em] text-slate-600 sm:text-[1.08rem]">
-              Start self-serve with Starter or work with us on a broader Team
-              rollout. The product story stays the same. The setup scope and
-              support path change with the complexity of your deployment.
+            <p className="mt-4 max-w-[48rem] text-[1rem] leading-8 tracking-[-0.02em] text-slate-600 sm:text-[1.08rem]">
+              Dropwise pricing scales with the real value of the product:
+              how many systems you connect, how complex the routing becomes,
+              and how much event traffic flows through the platform.
             </p>
           </div>
         </section>
 
-        <section className="mt-8 grid gap-6 lg:grid-cols-2">
-          <div className="overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(241,245,255,0.76))] px-6 py-8 shadow-[0_20px_55px_rgba(15,23,42,0.05)] ring-1 ring-white/80 backdrop-blur-sm sm:px-8 sm:py-9">
-            <div className="flex items-start justify-between gap-4">
+        <section className="mt-8 grid gap-6 xl:grid-cols-2 2xl:grid-cols-4">
+          {tiers.map((tier) => (
+            <div
+              key={tier.name}
+              className="overflow-hidden rounded-[2rem] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(241,245,255,0.76))] px-6 py-8 shadow-[0_20px_55px_rgba(15,23,42,0.05)] ring-1 ring-white/80 backdrop-blur-sm sm:px-8 sm:py-9"
+            >
               <div>
                 <div className="text-[0.78rem] font-semibold uppercase tracking-[0.18em] text-[#2563eb]">
-                  Starter
+                  {tier.name}
                 </div>
-                <h2 className="mt-3 text-[1.85rem] font-semibold tracking-[-0.045em] text-slate-950">
-                  For one operator or a very small setup.
+                <h2 className="mt-3 text-[1.2rem] font-semibold tracking-[-0.03em] text-slate-950">
+                  {tier.summary}
                 </h2>
               </div>
-              <div className="rounded-full bg-white/80 px-3 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-slate-500 ring-1 ring-slate-200/70">
-                Self-serve
-              </div>
-            </div>
 
-            <div className="mt-6 rounded-[1.5rem] bg-white/76 px-5 py-5 ring-1 ring-white/80">
-              <div className="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Pricing
+              <div className="mt-6 rounded-[1.5rem] bg-white/78 px-5 py-5 ring-1 ring-white/80">
+                <div className="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Price
+                </div>
+                <div className="mt-3 text-[1.6rem] font-semibold tracking-[-0.04em] text-slate-950">
+                  {tier.price}
+                </div>
+                <p className="mt-3 text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-600">
+                  {tier.note}
+                </p>
               </div>
-              <div className="mt-3 text-[1.35rem] font-semibold tracking-[-0.04em] text-slate-950">
-                $49/month for up to 2 users.
-              </div>
-              <p className="mt-3 text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-600">
-                Starter is the path for quick evaluation and small-scale
-                adoption. Additional users can be added at +$30, then +$45,
-                then +$65 per user, with each extra user beyond 5 staying at
-                +$65. By the 5-user crossover, Starter should stop being the
-                sensible path.
-              </p>
-            </div>
 
-            <div className="mt-6 grid gap-3">
-              {starterFeatures.map((feature) => (
-                <div
-                  key={feature}
-                  className="flex items-start gap-3 rounded-[1.1rem] bg-white/68 px-4 py-3 ring-1 ring-white/80"
-                >
-                  <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#60a5fa] shadow-[0_0_18px_rgba(96,165,250,0.4)]" />
-                  <div className="text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-700">
-                    {feature}
+              <div className="mt-6 grid gap-3">
+                {tier.features.map((feature) => (
+                  <div
+                    key={feature}
+                    className="flex items-start gap-3 rounded-[1.1rem] bg-white/68 px-4 py-3 ring-1 ring-white/80"
+                  >
+                    <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#60a5fa] shadow-[0_0_18px_rgba(96,165,250,0.4)]" />
+                    <div className="text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-700">
+                      {feature}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Link
-                href="/signin"
-                className="inline-flex h-12 items-center justify-center rounded-full bg-[#3b82f6] px-6 text-[0.96rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.28),0_0_26px_rgba(59,130,246,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef] hover:shadow-[0_16px_36px_rgba(59,130,246,0.32),0_0_34px_rgba(59,130,246,0.22)]"
-                style={{ color: "#fff" }}
-              >
-                Get started
-              </Link>
-              <div className="text-[0.9rem] tracking-[-0.02em] text-slate-500">
-                Best for evaluation and live setups below the Team threshold.
-              </div>
-            </div>
-          </div>
-
-          <div className="overflow-hidden rounded-[2rem] border border-[#60a5fa]/35 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(236,244,255,0.84))] px-6 py-8 shadow-[0_24px_60px_rgba(59,130,246,0.08)] ring-1 ring-white/80 backdrop-blur-sm sm:px-8 sm:py-9">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-[0.78rem] font-semibold uppercase tracking-[0.18em] text-[#2563eb]">
-                  Team
-                </div>
-                <h2 className="mt-3 text-[1.85rem] font-semibold tracking-[-0.045em] text-slate-950">
-                  For broader rollout, more control, and onboarding help.
-                </h2>
-              </div>
-              <div className="rounded-full bg-white/82 px-3 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[#2563eb] ring-1 ring-[#60a5fa]/25">
-                Sales-assisted
-              </div>
-            </div>
-
-            <div className="mt-6 rounded-[1.5rem] bg-white/78 px-5 py-5 ring-1 ring-white/80">
-              <div className="text-[0.76rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Pricing
-              </div>
-              <div className="mt-3 text-[1.35rem] font-semibold tracking-[-0.04em] text-slate-950">
-                Starting around $199/month at 5 users.
-              </div>
-              <p className="mt-3 text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-600">
-                Team is the right path once deployment reaches 5 users or
-                needs broader routing, shared administration, and rollout
-                support. It should become the better-value option once a
-                customer reaches the 5-user crossover.
-              </p>
-            </div>
-
-            <div className="mt-6 grid gap-3">
-              {teamFeatures.map((feature) => (
-                <div
-                  key={feature}
-                  className="flex items-start gap-3 rounded-[1.1rem] bg-white/68 px-4 py-3 ring-1 ring-white/80"
+              <div className="mt-7">
+                <Link
+                  href={tier.ctaHref}
+                  className="inline-flex h-12 items-center justify-center rounded-full bg-[#3b82f6] px-6 text-[0.96rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.28),0_0_26px_rgba(59,130,246,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef] hover:shadow-[0_16px_36px_rgba(59,130,246,0.32),0_0_34px_rgba(59,130,246,0.22)]"
+                  style={{ color: "#fff" }}
                 >
-                  <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#34d399] shadow-[0_0_18px_rgba(52,211,153,0.4)]" />
-                  <div className="text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-700">
-                    {feature}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Link
-                href="/contact-sales"
-                className="inline-flex h-12 items-center justify-center rounded-full bg-[#3b82f6] px-6 text-[0.96rem] font-semibold tracking-[-0.02em] shadow-[0_12px_28px_rgba(59,130,246,0.28),0_0_26px_rgba(59,130,246,0.16)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f76ef] hover:shadow-[0_16px_36px_rgba(59,130,246,0.32),0_0_34px_rgba(59,130,246,0.22)]"
-                style={{ color: "#fff" }}
-              >
-                Contact sales
-              </Link>
-              <div className="text-[0.9rem] tracking-[-0.02em] text-slate-500">
-                Best for 5+ user deployment and rollout planning.
+                  {tier.ctaLabel}
+                </Link>
               </div>
             </div>
-          </div>
+          ))}
         </section>
 
         <section className="mt-8 overflow-hidden rounded-[2rem] border border-slate-200/70 bg-white/66 px-6 py-8 shadow-[0_20px_55px_rgba(15,23,42,0.05)] ring-1 ring-white/80 backdrop-blur-sm sm:px-8 sm:py-10">
-          <div className="max-w-[40rem]">
+          <div className="max-w-[44rem]">
             <div className="text-[0.78rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              Compare the paths
+              Compare tiers
             </div>
             <h2 className="mt-3 text-[1.85rem] font-semibold tracking-[-0.045em] text-slate-950">
-              Choose the path that matches the scope of your rollout.
+              Pricing expands with connected systems and event flow.
             </h2>
           </div>
 
@@ -239,7 +281,7 @@ export default function PricingPage() {
             {comparisonRows.map((row, index) => (
               <div
                 key={row.label}
-                className={`grid gap-3 px-4 py-4 sm:grid-cols-[0.8fr_1fr_1fr] sm:px-6 ${
+                className={`grid gap-3 px-4 py-4 lg:grid-cols-[0.8fr_1fr_1fr_1fr_1fr] sm:px-6 ${
                   index > 0 ? "border-t border-slate-200/70" : ""
                 }`}
               >
@@ -250,7 +292,13 @@ export default function PricingPage() {
                   {row.starter}
                 </div>
                 <div className="text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-700">
-                  {row.team}
+                  {row.growth}
+                </div>
+                <div className="text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-700">
+                  {row.pro}
+                </div>
+                <div className="text-[0.96rem] leading-7 tracking-[-0.02em] text-slate-700">
+                  {row.enterprise}
                 </div>
               </div>
             ))}
